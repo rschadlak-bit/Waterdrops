@@ -1,0 +1,2943 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#b0b3b7">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Beschlagenes Glas (Shader)</title>
+</head>
+<body style="margin:0">
+
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: Vollbild-Glasscheibe, darüber nur ein Hinweis oben und eine schmale Leiste unten. */
+:root {
+  --bg: #0b121b;
+  --ink: #e3edf5;
+  --mute: rgba(227, 237, 245, .68);
+  --pill: rgba(10, 18, 28, .55);
+  --line: rgba(227, 237, 245, .22);
+  --accent: #c9ccd0;
+  --accent-soft: rgba(201, 204, 208, .2);
+  color-scheme: dark;
+}
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+#glass {
+  position: fixed;
+  left: 0;
+  top: 0;
+  display: block;
+  touch-action: none;
+  cursor: crosshair;
+}
+.ui {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  box-sizing: border-box;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: calc(env(safe-area-inset-top, 0px) + 14px);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  pointer-events: none;
+}
+.top {
+  max-width: 34em;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.hint {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: .02em;
+  color: rgba(34, 38, 42, .72);
+  text-shadow: 0 1px 6px rgba(255, 255, 255, .5);
+  animation: dim 1.6s 9s forwards;
+}
+.note {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(34, 38, 42, .85);
+  text-shadow: 0 1px 6px rgba(255, 255, 255, .5);
+  min-height: 1.4em;
+}
+@keyframes dim { to { opacity: .4; } }
+.bar[hidden] { display: none !important; }
+.bar {
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px 10px;
+  max-width: 100%;
+  box-sizing: border-box;
+  background: var(--pill);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+}
+.bar-label {
+  font-size: 11px;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.modes button {
+  appearance: none;
+  min-height: 40px;
+  padding: 0 13px;
+  border-radius: 20px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+.modes button[aria-pressed="true"] {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: #f2fbff;
+}
+.modes button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hint { animation: none; }
+}
+  .tilt { align-self: stretch; width: 100%; box-sizing: border-box; text-align: center; display: flex; flex-direction: column; gap: 4px; margin-top: 10px; font-size: 12px; opacity: .9; }
+  .tilt input { width: 100%; accent-color: var(--accent); }
+  .tilt b { font-weight: 600; }
+</style>
+
+<canvas id="glass" aria-label="Beschlagene Glasscheibe mit Wassertropfen"></canvas>
+<div class="ui">
+  <div class="top">
+    <p class="note" id="note" role="status" aria-live="polite" hidden></p>
+  </div>
+  <div class="bar" id="bar" hidden>
+    <span class="bar-label">Lage des Glases</span>
+    <div class="modes" role="group" aria-label="Lage des Glases">
+      <button type="button" data-mode="up" aria-pressed="true" title="Aufrecht gehalten: Tropfen laufen nach unten">Aufrecht</button>
+      <button type="button" data-mode="left" aria-pressed="false" title="Nach links geneigt: Tropfen laufen nach links unten">Links</button>
+      <button type="button" data-mode="right" aria-pressed="false" title="Nach rechts geneigt: Tropfen laufen nach rechts unten">Rechts</button>
+      <button type="button" data-mode="flat" aria-pressed="false" title="Flach gehalten: Tropfen bleiben stehen und wachsen">Flach</button>
+      <button type="button" data-mode="sensor" aria-pressed="false" title="Lagesensor des Handys verwenden">Sensor</button>
+    </div>
+    <label class="tilt"><span>Neigung <b id="tiltv">90°</b></span><input type="range" id="tilt" min="0" max="90" step="0.5" value="90" aria-label="Neigung des Glases in Grad, 0 flach bis 90 aufrecht"></label>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var TAU = Math.PI * 2;
+  var cv = document.getElementById('glass');
+  var ctx = cv.getContext('2d');
+  var glc = document.createElement('canvas');
+  var gl = null;
+  try { gl = glc.getContext('webgl2', { antialias: false, alpha: false, depth: false, stencil: false, powerPreference: 'high-performance' }); } catch (errGL) { gl = null; }
+  var glOK = !!gl;
+  var bg = document.createElement('canvas');
+  var bctx = bg.getContext('2d');
+  var fog = document.createElement('canvas');
+  var fctx = fog.getContext('2d');
+  var pm = document.createElement('canvas');
+  var pmc = pm.getContext('2d');
+  var pl = document.createElement('canvas');
+  var plc = pl.getContext('2d');
+  var ll = document.createElement('canvas');
+  var llc = ll.getContext('2d');
+  var lakeBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  var layerStale = true, lakeRefog = false;
+  var noteEl = document.getElementById('note');
+
+  var W = 0, H = 0, dpr = 1;
+  var drops = [];
+  var tick = 0;
+  var fogGrad = null;
+  var CAP = 900;
+  var idc = 0;
+  var ARM0 = 19;
+  var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  var SPEED = reduce ? 0.5 : 1;
+
+  var grav = { x: 0, y: 1, m: 1 };
+  var gT = { x: 0, y: 1, m: 1 };
+  var mode = 'up';
+
+  function rnd(a, b) { return a + Math.random() * (b - a); }
+
+  function seeded(seed) {
+    return function () {
+      seed = (seed * 16807) % 2147483647;
+      return (seed - 1) / 2147483646;
+    };
+  }
+
+  /* ---------- Hintergrund: hinterleuchtete Fläche, sehr unscharf ---------- */
+  var blobs = [];
+
+  function initBlobs() {
+    var r = seeded(11);
+    var cols = [[255, 255, 255], [120, 124, 128], [255, 255, 255], [90, 94, 98]];
+    blobs = [];
+    for (var i = 0; i < 16; i++) {
+      blobs.push({
+        c: cols[i % cols.length].join(','),
+        x: r(), y: r(),
+        rad: 0.18 + r() * 0.3,
+        a: 0.02 + r() * 0.03,
+        sx: 0.04 + r() * 0.08, sy: 0.03 + r() * 0.07,
+        px: r() * TAU, py: r() * TAU,
+        ax: 0.04 + r() * 0.1, ay: 0.03 + r() * 0.08
+      });
+    }
+  }
+
+  function paintBg(t) {
+    bctx.setTransform(bg.width / W, 0, 0, bg.height / H, 0, 0);
+    bctx.globalCompositeOperation = 'source-over';
+    var g = bctx.createLinearGradient(0, 0, W * 0.4, H);
+    g.addColorStop(0, '#c2c5c8');
+    g.addColorStop(0.55, '#b0b3b7');
+    g.addColorStop(1, '#9ea2a6');
+    bctx.fillStyle = g;
+    bctx.fillRect(0, 0, W, H);
+    bctx.globalCompositeOperation = 'lighter';
+    var m = Math.max(W, H);
+    for (var i = 0; i < blobs.length; i++) {
+      var b = blobs[i];
+      var x = (b.x + Math.sin(t * b.sx + b.px) * b.ax) * W;
+      var y = (b.y + Math.sin(t * b.sy + b.py) * b.ay) * H;
+      var rad = b.rad * m * 0.55;
+      var gr = bctx.createRadialGradient(x, y, 0, x, y, rad);
+      gr.addColorStop(0, 'rgba(' + b.c + ',' + b.a.toFixed(2) + ')');
+      gr.addColorStop(1, 'rgba(' + b.c + ',0)');
+      bctx.fillStyle = gr;
+      bctx.fillRect(x - rad, y - rad, rad * 2, rad * 2);
+    }
+    bctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* ---------- Beschlag ---------- */
+  function fillFog(alpha) {
+    fctx.globalCompositeOperation = 'source-over';
+    fctx.globalAlpha = alpha;
+    fctx.fillStyle = fogGrad;
+    fctx.fillRect(0, 0, W, H);
+    fctx.globalAlpha = 1;
+  }
+
+  function micClear(x0, y0, x1, y1, w) {
+    if (!emi) return;
+    var len = Math.hypot(x1 - x0, y1 - y0), st = Math.max(1, Math.ceil(len / 3)), rad = Math.max(1, w * 0.5);
+    for (var s = 0; s <= st; s++) {
+      var px = x0 + (x1 - x0) * s / st, py = y0 + (y1 - y0) * s / st;
+      var cx0 = Math.max(0, Math.floor((px - rad) / WC)), cx1 = Math.min(wcols - 1, Math.floor((px + rad) / WC));
+      var cy0 = Math.max(0, Math.floor((py - rad) / WC)), cy1 = Math.min(wrows - 1, Math.floor((py + rad) / WC));
+      for (var cy = cy0; cy <= cy1; cy++) for (var cx = cx0; cx <= cx1; cx++) {
+        var k = cy * wcols + cx;
+        if (emi[k] > 0.03) emi[k] = 0.03;
+      }
+    }
+  }
+
+  function wipeLine(x0, y0, x1, y1, w) {
+    micClear(x0, y0, x1, y1, w);
+    fctx.globalCompositeOperation = 'destination-out';
+    fctx.lineCap = 'round';
+    fctx.lineJoin = 'round';
+    fctx.lineWidth = w;
+    fctx.strokeStyle = '#000';
+    fctx.beginPath();
+    fctx.moveTo(x0, y0);
+    fctx.lineTo(x1, y1);
+    fctx.stroke();
+    fctx.globalCompositeOperation = 'source-over';
+  }
+
+  function wipeDot(x, y, rad) {
+    fctx.globalCompositeOperation = 'destination-out';
+    fctx.fillStyle = '#000';
+    fctx.beginPath();
+    fctx.arc(x, y, rad, 0, TAU);
+    fctx.fill();
+    fctx.globalCompositeOperation = 'source-over';
+  }
+
+  /* ---------- Tropfen ---------- */
+  function addDrop(x, y, r) {
+    var d = { id: (++idc & 0xffff) || 1, x: x, y: y, r: r, vx: 0, vy: 0, hx: 0, hy: 1, zig: 0, phase: 0, timer: 0, age: 0, wv: 0, into: null, held: false, arm: null, nm: 0, ghost: 0, hue: 150 + Math.random() * 80, p1: Math.random() * TAU, p2: Math.random() * TAU, p3: Math.random() * TAU, slide: false, dead: false, trail: 0, shed: 0, thr: rnd(0.92, 1.12), pearlGap: rnd(10, 24) };
+    drops.push(d);
+    return d;
+  }
+
+  /* Abgerissenes Wasser liegt zuerst als dünner Film in der frischen Spur. Erst wenn die Spur abgetrocknet ist,
+     zieht sich der Film zu Perlen zusammen. Bis dahin gibt es dort keine Tröpfchen. */
+  var pearlQ = [];
+  function queueTrailDrop(x, y, r) {
+    var wi0 = wetIdx(x, y);
+    /* nur was wirklich in der Spur liegt, wird zum Film; sonst bleibt nichts zurück */
+    if (wi0 >= 0 && wet[wi0] > PEARL_WET && pearlQ.length < 500) pearlQ.push({ x: x, y: y, r: r, t: tick });
+    return null;
+  }
+  function processPearls() {
+    for (var i = pearlQ.length - 1; i >= 0; i--) {
+      var p = pearlQ[i], wi = wetIdx(p.x, p.y);
+      if (tick - p.t > 4000 || wi < 0) { pearlQ.splice(i, 1); continue; }
+      if (wet[wi] > PEARL_WET) continue;
+      var dd = addDrop(p.x, p.y, p.r);
+      dd.nm = 20;
+      pearlQ.splice(i, 1);
+    }
+  }
+  var PEARL_WET = 60;
+  /* Ab dieser Neigung (sin) gibt es keine ruhenden Wasserflächen mehr: kritischer Radius 5.6/sqrt(m) liegt unter dem Seeradius */
+  var FLAT_ON = 0.22, FLAT_OFF = 0.3;
+  var PIN_CAP = 1.1, RUNCAP = 11.5, LEAK_K = 2.4;   /* Seen größer als LEAK_K * kritischer Tropfenradius brechen nach unten durch */
+  var EMIT_K = 1.7;
+  function emitDrop(r, hmax) {
+    for (var t = 0; t < 4; t++) {
+      var x = rnd(0, W), y = rnd(0, H * hmax), wi = wetIdx(x, y);
+      if (wi < 0 || wet[wi] > 0) continue;
+      var q = Math.min(1, mic[wi] / 0.7) * emi[wi];
+      if (Math.random() < q * q * q) return addDrop(x, y, r);
+    }
+    return null;
+  }
+
+  function seedDrops() {
+    drops = [];
+    pearlQ = [];
+    var i;
+    for (i = 0; i < 150; i++) addDrop(rnd(0, W), rnd(0, H), rnd(0.8, 1.9));
+    for (i = 0; i < 26; i++) addDrop(rnd(0, W), rnd(0, H), rnd(2.5, 4.6));
+    for (i = 0; i < 2; i++) addDrop(rnd(0, W), rnd(0, H * 0.7), rnd(5, 6.6));
+  }
+
+  function rSlide() {
+    var m = Math.max(grav.m, 0.02);
+    return Math.min(60, 5.6 / Math.sqrt(m));
+  }
+
+  /* Der kleinere Tropfen wird vom größeren aufgenommen: er wandert hinein und schrumpft dabei. */
+  function startMerge(a, b) {
+    if (a.into || b.into || a.dead || b.dead || a.nm > 0 || b.nm > 0) return;
+    var big = a.r >= b.r ? a : b;
+    var small = big === a ? b : a;
+    var wasSmallSliding = small.slide;
+    small.into = big;
+    small.slide = false;
+    if (big.slide && !wasSmallSliding) {
+      /* Berührung: die Kontaktlinie des Läufers bleibt am Nachbarn hängen, die Bahn knickt zu ihm hin ab */
+      var kx = small.x - big.x, ky = small.y - big.y, kl = Math.hypot(kx, ky) || 1;
+      var ratio = (small.r * small.r) / (big.r * big.r + small.r * small.r);
+      var imp = (0.12 + 1.25 * Math.sqrt(ratio)) * SPEED;
+      if (kx * grav.x + ky * grav.y < 0) imp *= 0.25;   /* gegen die Schwerkraft zieht ein kleiner Nachbar kaum */
+      big.vx = big.vx * (1 - 0.6 * ratio) + (kx / kl) * imp;
+      big.vy = big.vy * (1 - 0.6 * ratio) + (ky / kl) * imp * 0.7;
+    }
+    if (small.held) {
+      small.held = false;
+      if (big.r < ARM0) big.held = true;
+    }
+  }
+
+  function flowMerges(f) {
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+      if (!d.into || d.dead) continue;
+      var B = d.into;
+      if (B.dead) { d.into = null; continue; }
+      var dd = Math.hypot(B.x - d.x, B.y - d.y);
+      if (dd > (B.r + d.r) * 1.7 + 3) { d.into = null; continue; }
+      var A = d.r * d.r, AB = B.r * B.r;
+      var dA = Math.min(A, Math.max(A * 0.4 * f, 0.3));   /* Verschmelzen geschieht blitzschnell */
+      var wB = dA / (AB + dA);
+      B.x += (d.x - B.x) * wB;
+      B.y += (d.y - B.y) * wB;
+      B.vx = (B.vx * AB + d.vx * dA) / (AB + dA);
+      B.vy = (B.vy * AB + d.vy * dA) / (AB + dA);
+      var dv = Math.hypot(d.vx, d.vy);
+      if (!B.slide && dv > 0.6) {
+        B.slide = true;
+        B.phase = 1;
+        B.timer = 12;
+        B.hx = d.vx / dv;
+        B.hy = d.vy / dv;
+        B.age = 40;
+      }
+      d.x += (B.x - d.x) * Math.min(1, 0.6 * f);
+      d.y += (B.y - d.y) * Math.min(1, 0.6 * f);
+      d.vx *= 0.85;
+      d.vy *= 0.85;
+      B.r = Math.min(140, Math.sqrt(AB + dA));
+      d.r = Math.sqrt(Math.max(0, A - dA));
+      if (d.r < 0.7) d.dead = true;
+    }
+  }
+
+  function resize() {
+    var w = Math.max(1, window.innerWidth);
+    var h = Math.max(1, window.innerHeight);
+    if (w === W && Math.abs(h - H) < 1) return;
+    W = w;
+    H = h;
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    var fd = glOK ? 1 : dpr;   /* mit Shader genügt ein Beschlag in Bildschirmauflösung, spart Hochladen */
+    cv.width = glOK ? 2 : Math.round(W * dpr);
+    cv.height = glOK ? 2 : Math.round(H * dpr);
+    fog.width = Math.round(W * fd);
+    fog.height = Math.round(H * fd);
+    cv.style.width = W + 'px';
+    cv.style.height = H + 'px';
+    ctx.setTransform(glOK ? 1 : dpr, 0, 0, glOK ? 1 : dpr, 0, 0);
+    fctx.setTransform(fd, 0, 0, fd, 0, 0);
+    bg.width = Math.max(2, Math.round(W * 0.5));
+    bg.height = Math.max(2, Math.round(H * 0.5));
+    pm.width = pl.width = ll.width = W;
+    pm.height = pl.height = ll.height = H;
+    layerStale = true;
+    initBlobs();
+    paintBg(0);
+    fogGrad = fctx.createLinearGradient(0, 0, 0, H);
+    fogGrad.addColorStop(0, 'rgb(196,199,202)');
+    fogGrad.addColorStop(1, 'rgb(160,164,168)');
+    fillFog(1);
+    initWet();
+    initLake();
+    if (glOK) glResize();
+    seedDrops();
+  }
+
+  /* ---------- Feuchte Bahnen: Spuren, in denen Tropfen mitgerissen werden ---------- */
+  var WC = 4, wcols = 0, wrows = 0, wet = null, wdx = null, wdy = null, wid = null;
+
+  function initWet() {
+    wcols = Math.ceil(W / WC) + 1;
+    wrows = Math.ceil(H / WC) + 1;
+    wet = new Uint8Array(wcols * wrows);
+    wdx = new Int8Array(wcols * wrows);
+    wdy = new Int8Array(wcols * wrows);
+    wid = new Uint16Array(wcols * wrows);
+    initGlass();
+  }
+
+  /* ---------- Glasoberfläche: Kalk, Schmutz, Rauheit (fest) und Nebeldichte (wächst nach) ---------- */
+  var kal = null, mic = null, emi = null;   /* emi: Neigung zur Neukondensation (nach dem Wischen kurz aufgehoben) */
+  var MIC_K = 0.05;
+  var ATTRACT = 0;   /* Zug stehender Tropfen auf Läufer */
+
+  function makeNoise(cols, rows, S, rr) {
+    var lw = Math.ceil(cols / S) + 2, lh = Math.ceil(rows / S) + 2, lat = new Float32Array(lw * lh), i;
+    for (i = 0; i < lat.length; i++) lat[i] = rr();
+    var out = new Float32Array(cols * rows);
+    for (var y = 0; y < rows; y++) {
+      var fy = y / S, iy = Math.floor(fy), ty = fy - iy;
+      ty = ty * ty * (3 - 2 * ty);
+      for (var x = 0; x < cols; x++) {
+        var fx = x / S, ix = Math.floor(fx), tx = fx - ix;
+        tx = tx * tx * (3 - 2 * tx);
+        var a = lat[iy * lw + ix], b = lat[iy * lw + ix + 1], c = lat[(iy + 1) * lw + ix], d = lat[(iy + 1) * lw + ix + 1];
+        out[y * cols + x] = (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+      }
+    }
+    return out;
+  }
+
+  function initGlass() {
+    var n = wcols * wrows, rr = seeded(7919), i;
+    var n1 = makeNoise(wcols, wrows, 3, rr), n2 = makeNoise(wcols, wrows, 9, rr), n3 = makeNoise(wcols, wrows, 5, rr);
+    kal = new Float32Array(n);
+    mic = new Float32Array(n);
+    emi = new Float32Array(n).fill(1);
+    for (i = 0; i < n; i++) {
+      kal[i] = 0.34 * n1[i] + 0.2 * n2[i];
+      mic[i] = 0.3 + 0.5 * n3[i];
+    }
+    /* Kalkflecken: einzelne, scharf begrenzte Haftstellen */
+    var spots = Math.round(W * H / 7000);
+    for (var k = 0; k < spots; k++) {
+      var sx = rr() * W, sy = rr() * H, srad = 3 + rr() * 7, str = 0.7 + rr() * 1.1;
+      var cx0 = Math.max(0, Math.floor((sx - srad) / WC)), cx1 = Math.min(wcols - 1, Math.floor((sx + srad) / WC));
+      var cy0 = Math.max(0, Math.floor((sy - srad) / WC)), cy1 = Math.min(wrows - 1, Math.floor((sy + srad) / WC));
+      for (var cy = cy0; cy <= cy1; cy++) {
+        for (var cx = cx0; cx <= cx1; cx++) {
+          var dd = Math.hypot((cx + 0.5) * WC - sx, (cy + 0.5) * WC - sy) / srad;
+          if (dd < 1) kal[cy * wcols + cx] += str * (1 - dd * dd);
+        }
+      }
+    }
+  }
+
+  function pinAt(x, y) {
+    var i = wetIdx(x, y);
+    return i < 0 ? 0.3 : kal[i];
+  }
+
+  function micAt(x, y) {
+    var i = wetIdx(x, y);
+    return i < 0 ? 0 : mic[i];
+  }
+
+  /* kritische Fläche r^2, ab der der Tropfen an dieser Stelle losrutscht */
+  function rcAt(x, y, rs) {
+    return rs * rs * (1 + Math.min(pinAt(x, y), PIN_CAP));   /* auch stark haftende Stellen halten nur begrenzt: große Tropfen laufen immer */
+  }
+
+  /* Der Tropfen nimmt den Nebel auf, den er überstreicht */
+  function harvest(x, y, rad, dist) {
+    var frac = Math.min(1, dist / WC), got = 0;
+    var cx0 = Math.max(0, Math.floor((x - rad) / WC)), cx1 = Math.min(wcols - 1, Math.floor((x + rad) / WC));
+    var cy0 = Math.max(0, Math.floor((y - rad) / WC)), cy1 = Math.min(wrows - 1, Math.floor((y + rad) / WC));
+    for (var cy = cy0; cy <= cy1; cy++) {
+      for (var cx = cx0; cx <= cx1; cx++) {
+        var k = cy * wcols + cx, m = mic[k];
+        got += m * MIC_K * WC * WC * frac;
+        mic[k] = m * (1 - 0.9 * frac);
+      }
+    }
+    return got;
+  }
+
+  function regrowMic() {
+    for (var i = 0; i < mic.length; i++) { mic[i] += (0.85 - mic[i]) * 0.04; emi[i] += (1 - emi[i]) * 0.04; }
+  }
+
+  function wetIdx(x, y) {
+    var cx = Math.floor(x / WC), cy = Math.floor(y / WC);
+    if (cx < 0 || cy < 0 || cx >= wcols || cy >= wrows) return -1;
+    return cy * wcols + cx;
+  }
+
+  function markWet(x0, y0, x1, y1, w, strength, owner) {
+    var dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy);
+    if (len < 0.01) return;
+    var qx = Math.round(dx / len * 127), qy = Math.round(dy / len * 127);
+    var rad = Math.max(1, w * 0.42);
+    var steps = Math.max(1, Math.ceil(len / 2));
+    for (var s = 0; s <= steps; s++) {
+      var t = s / steps, px = x0 + dx * t, py = y0 + dy * t;
+      var cx0 = Math.max(0, Math.floor((px - rad) / WC)), cx1 = Math.min(wcols - 1, Math.floor((px + rad) / WC));
+      var cy0 = Math.max(0, Math.floor((py - rad) / WC)), cy1 = Math.min(wrows - 1, Math.floor((py + rad) / WC));
+      for (var cy = cy0; cy <= cy1; cy++) {
+        for (var cx = cx0; cx <= cx1; cx++) {
+          var ex = (cx + 0.5) * WC - px, ey = (cy + 0.5) * WC - py;
+          if (ex * ex + ey * ey <= rad * rad + WC * WC * 0.5) {
+            var k = cy * wcols + cx;
+            wet[k] = strength;
+            wdx[k] = qx;
+            wdy[k] = qy;
+            wid[k] = owner;
+          }
+        }
+      }
+    }
+  }
+
+  function decayWet() {
+    for (var i = 0; i < wet.length; i++) {
+      if (wet[i] > 0) wet[i] = wet[i] > 7 ? wet[i] - 7 : 0;
+    }
+  }
+
+  /* ---------- Wasserflächen ----------
+     Wasserdicke als Feld auf einem groben Raster. Die Oberflächenspannung glättet den Rand
+     (Krümmungsfluss), das Volumen bleibt dabei erhalten. Zusammenfließen, Einschnüren und
+     Teilen ergeben sich aus dem Feld, es gibt keine Sonderfälle. */
+  var CS = 4, gw = 0, gh = 0;
+  var phi = null, pin = null, bl = null, tmpv = null, wgt = null;
+  var lakeM = 0, lakeMode = false, lakeDirty = false, lakeIdle = true, lakeQuiet = 0, lakeFree = 1;
+  var draining = false, dSeen = null, dStack = null;
+  var pullHead = null;
+  var pullFree = false, needExit = false;   /* Kopf war schon ganz aus dem Wasser / nach dem Verschmelzen erst wieder eintauchen */
+  var pulling = false, pullRoot = -1, debtPending = 0, debtAge = 0, pullM0 = -1, pullLen = 0, pullAdded = 0, pullSp = 0, pullBonus = 0;
+  var lakeBoost = 0, lakeLastK = 0, lakeFreeM = 1e9;
+  var own = null, prevComp = null, ownActive = false, absorbing = false;
+  var ABS_RATE = 0.04;
+  var MAXC = 4096;
+  var compId = null, cStack = null;
+  var cMass = new Float64Array(MAXC + 1), cFreeM = new Float64Array(MAXC + 1), cTgt = new Float64Array(MAXC + 1), cM = new Float64Array(MAXC + 1);
+  var cLo = new Float32Array(MAXC + 1), cHi = new Float32Array(MAXC + 1), cTh = new Float32Array(MAXC + 1);
+  var pmS = document.createElement('canvas');
+  var pmSc = pmS.getContext('2d');
+  var pmImg = null;
+  var pmF = document.createElement('canvas'), pmFc = pmF.getContext('2d'), pmFImg = null;   /* harte Maske, nur das Innere, zum Räumen des Beschlags */
+  var pf = document.createElement('canvas'), pfc = pf.getContext('2d');
+  var rbuf = null, rtmp = null, bphi = null, bcomb = null, bodyOn = false;
+  var RS = 2;
+  var MASK_C = 0.5;
+  var RLIFT = 1.2;      /* gleicht das Schrumpfen dünner Arme durch die Weichzeichnung aus */
+  var KSH = 1.6;        /* Schärfe der Randschicht */
+  var KB = 0.35;        /* Grundgeschwindigkeit der Glättung pro Schritt */
+  var KBOOST = 6;       /* zusätzlicher Antrieb bei starker Krümmung (Einschnürungen) */
+  var THIN_B = 0.88, THIN_W = 0.3, THIN_K = 0.1, THIN_UNPIN = 0.4;   /* Ausläufer: Schwelle der Weichzeichnung, Breite, Beschleunigung, Lösen der Haftung */
+  var E0 = 0.12;        /* ab dieser Krümmung fließt der Rand schnell */
+  var PIN_STEP = 1 / 90;   /* frisch gezogenes Wasser haftet zunächst fest ...      */
+  var PIN_FLOOR = 0.9;     /* ... und bleibt danach weitgehend haften (Kontaktlinie) */
+  var ARM_R = 6.5;      /* halbe Breite ausgezogener Arme in Pixel */
+  var LAKE_R0 = 11;     /* ab diesem Tropfenradius entsteht eine Wasserfläche */
+
+  function initLake() {
+    gw = Math.ceil(W / CS) + 3;
+    gh = Math.ceil(H / CS) + 3;
+    var n = gw * gh;
+    phi = new Float32Array(n);
+    growQ = [];
+    pin = new Float32Array(n);
+    bl = new Float32Array(n);
+    tmpv = new Float32Array(n);
+    wgt = new Float32Array(n);
+    bphi = new Float32Array(n);
+    armMark = new Int32Array(n);
+    bcomb = new Float32Array(n);
+    rbuf = new Float32Array(n);
+    rtmp = new Float32Array(n);
+    compId = new Int32Array(n);
+    cStack = new Int32Array(n);
+    pullRoot = -1;
+    debtPending = 0;
+    lakeM = 0;
+    lakeMode = false;
+    lakeDirty = true;
+    lakeIdle = true;
+    lakeFree = 1;
+    lakeFreeM = 1e9;
+    own = new Uint8Array(n);
+    prevComp = new Int32Array(n);
+    ownActive = false;
+    pmS.width = Math.max(2, Math.ceil(W / RS));
+    pmS.height = Math.max(2, Math.ceil(H / RS));
+    pmImg = pmSc.createImageData(pmS.width, pmS.height);
+    pmF.width = pmS.width;
+    pmF.height = pmS.height;
+    pmFImg = pmFc.createImageData(pmS.width, pmS.height);
+    pf.width = W;
+    pf.height = H;
+    for (var i = 0; i < pmImg.data.length; i += 4) {
+      pmImg.data[i] = pmImg.data[i + 1] = pmImg.data[i + 2] = 255;
+      pmImg.data[i + 3] = 0;
+    }
+  }
+
+  function lakeAt(x, y) {
+    if (!phi) return 0;
+    var fx = x / CS - 0.5, fy = y / CS - 0.5;
+    var ix = Math.floor(fx), iy = Math.floor(fy);
+    if (ix < 0 || iy < 0 || ix >= gw - 1 || iy >= gh - 1) return 0;
+    var ax = fx - ix, ay = fy - iy, i = iy * gw + ix;
+    return (phi[i] * (1 - ax) + phi[i + 1] * ax) * (1 - ay) + (phi[i + gw] * (1 - ax) + phi[i + gw + 1] * ax) * ay;
+  }
+
+  /* Scheibe aus Wasser ins Feld stempeln. count: Volumen kommt neu hinzu. pinIt: frisch ausgezogenes Wasser haftet. */
+  function lakeDisc(x, y, r, count, pinIt) {
+    var R = r + 2 * CS;
+    var x0 = Math.max(1, Math.floor((x - R) / CS)), x1 = Math.min(gw - 2, Math.ceil((x + R) / CS));
+    var y0 = Math.max(1, Math.floor((y - R) / CS)), y1 = Math.min(gh - 2, Math.ceil((y + R) / CS));
+    var delta = 0;
+    for (var iy = y0; iy <= y1; iy++) {
+      for (var ix = x0; ix <= x1; ix++) {
+        var d = Math.hypot((ix + 0.5) * CS - x, (iy + 0.5) * CS - y);
+        var p = 0.5 + (r - d) / (2 * CS);
+        if (p <= 0) continue;
+        if (p > 1) p = 1;
+        var i = iy * gw + ix;
+        if (p > phi[i]) {
+          delta += p - phi[i];
+          if (pinIt && phi[i] < 0.8) pin[i] = 1;
+          phi[i] = p;
+        }
+      }
+    }
+    lakeM += delta;
+    lakeDirty = true;
+    lakeIdle = false;
+    lakeQuiet = 0;
+    return delta;
+  }
+
+  /* Zwei Seen, die sich berühren: Der kleinere hat den höheren Innendruck und fließt in den größeren.
+     Je größer der Massenunterschied, desto schneller wird er eingenommen; gleich große Seen fließen nur gleichmäßig zusammen. */
+  var mW = new Float64Array(MAXC + 2), mL = new Float64Array(MAXC + 2), tRem = new Float64Array(MAXC + 2), remd = new Float64Array(MAXC + 2);
+  var sumWL = new Float64Array(MAXC + 2), sumWW = new Float64Array(MAXC + 2), lcx = new Float64Array(MAXC + 2), lcy = new Float64Array(MAXC + 2);
+  var massPrev = new Float64Array(MAXC + 2), bestM = new Float64Array(MAXC + 2);
+  var bestPc = new Int32Array(MAXC + 2), firstPc = new Int32Array(MAXC + 2), multiC = new Uint8Array(MAXC + 2);
+
+  function nearW(x, y, c) {
+    var dd = Math.hypot(x - lcx[c], y - lcy[c]);
+    return 1 / ((dd + 3) * (dd + 3));
+  }
+
+  function absorbStep(xmin, xmax, ymin, ymax) {
+    var gW = gw, x, y, i, c, o, Kp = lakeLastK, totalL = 0, act = false;
+    for (c = 1; c <= Kp; c++) { mW[c] = 0; mL[c] = 0; remd[c] = 0; sumWL[c] = 0; sumWW[c] = 0; lcx[c] = 0; lcy[c] = 0; tRem[c] = 0; }
+    /* Besitzer neu entstandener Zellen von den Nachbarn übernehmen (Hals zwischen den Seen) */
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        if (own[i] === 0 && phi[i] > 0.05) {
+          var o1 = own[i - 1], o2 = own[i + 1], o3 = own[i - gW], o4 = own[i + gW];
+          if (o1 === 1 || o2 === 1 || o3 === 1 || o4 === 1) own[i] = 1;
+          else if (o1 === 2 || o2 === 2 || o3 === 2 || o4 === 2) own[i] = 2;
+        }
+      }
+    }
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        c = compId[i];
+        if (c <= 0 || c > Kp) continue;
+        o = own[i];
+        if (o === 1) mW[c] += phi[i];
+        else if (o === 2) { mL[c] += phi[i]; lcx[c] += phi[i] * x; lcy[c] += phi[i] * y; totalL += phi[i]; }
+      }
+    }
+    if (totalL < 0.05) { ownActive = false; own.fill(0); return; }
+    for (c = 1; c <= Kp; c++) {
+      if (mL[c] > 0.05 && mW[c] > 0) {
+        lcx[c] /= mL[c];
+        lcy[c] /= mL[c];
+        var ratio = mW[c] / mL[c];
+        if (ratio > 1.15) {
+          /* Je größer der Massenunterschied, desto stärker (überproportional) der Sog des größeren Sees */
+          var fr = Math.pow((ratio - 1) / (ratio + 1), 1.5);
+          tRem[c] = Math.min(mL[c], ABS_RATE * fr * mL[c] + 0.04 * fr);
+          act = true;
+        }
+      }
+    }
+    if (!act) return;
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        c = compId[i];
+        if (c <= 0 || c > Kp || tRem[c] <= 0) continue;
+        if (own[i] === 2 && phi[i] > 0.02) sumWL[c] += phi[i] < 0.98 ? 1 : 0.02;
+        else if (own[i] === 1 && phi[i] < 0.999) sumWW[c] += (1 - phi[i]) * nearW(x, y, c);
+      }
+    }
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        c = compId[i];
+        if (c <= 0 || c > Kp || tRem[c] <= 0 || sumWW[c] < 1e-9 || own[i] !== 2 || phi[i] <= 0.02) continue;
+        var rem = tRem[c] * (phi[i] < 0.98 ? 1 : 0.02) / sumWL[c];
+        if (rem > phi[i]) rem = phi[i];
+        phi[i] -= rem;
+        remd[c] += rem;
+        if (phi[i] < 0.02) { phi[i] = 0; own[i] = 0; pin[i] = 0; }
+      }
+    }
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        c = compId[i];
+        if (c <= 0 || c > Kp || remd[c] <= 0 || own[i] !== 1 || phi[i] >= 0.999) continue;
+        var add = remd[c] * (1 - phi[i]) * nearW(x, y, c) / sumWW[c];
+        phi[i] = Math.min(1, phi[i] + add);
+      }
+    }
+    absorbing = true;
+  }
+
+  /* Erkennt, welche zuvor getrennten Flächen sich in diesem Schritt vereinigt haben, und vergibt Sieger (größte Masse) und Unterlegene */
+  function detectMerges(xmin, xmax, ymin, ymax, K, prevK) {
+    var gW = gw, x, y, i, c, pc, any = false;
+    for (c = 1; c <= K; c++) { firstPc[c] = 0; multiC[c] = 0; bestM[c] = 0; bestPc[c] = 0; }
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        c = compId[i];
+        if (c <= 0) continue;
+        pc = prevComp[i];
+        if (pc <= 0) continue;
+        if (!firstPc[c]) firstPc[c] = pc;
+        else if (firstPc[c] !== pc) { multiC[c] = 1; any = true; }
+      }
+    }
+    if (!any) return;
+    for (pc = 1; pc <= prevK; pc++) massPrev[pc] = 0;
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        c = compId[i];
+        if (c <= 0 || !multiC[c]) continue;
+        pc = prevComp[i];
+        if (pc > 0) massPrev[pc] += phi[i];
+      }
+    }
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        c = compId[i];
+        if (c <= 0 || !multiC[c]) continue;
+        pc = prevComp[i];
+        if (pc > 0 && massPrev[pc] > bestM[c]) { bestM[c] = massPrev[pc]; bestPc[c] = pc; }
+      }
+    }
+    for (y = ymin; y <= ymax; y++) {
+      for (x = xmin; x <= xmax; x++) {
+        i = y * gW + x;
+        c = compId[i];
+        if (c <= 0 || !multiC[c]) continue;
+        pc = prevComp[i];
+        own[i] = pc > 0 ? (pc === bestPc[c] ? 1 : 2) : 0;
+      }
+    }
+    ownActive = true;
+  }
+
+  /* Ein Schritt Krümmungsfluss. Jede zusammenhängende Wasserfläche behält ihr eigenes Volumen. */
+  function lakeStep() {
+    var gW = gw, gH = gh, x, y, i, row, c;
+    var xmin = gW, xmax = -1, ymin = gH, ymax = -1;
+    for (y = 0; y < gH; y++) {
+      row = y * gW;
+      for (x = 0; x < gW; x++) {
+        if (phi[row + x] > 0.002) {
+          if (x < xmin) xmin = x;
+          if (x > xmax) xmax = x;
+          if (y < ymin) ymin = y;
+          if (y > ymax) ymax = y;
+        }
+      }
+    }
+    if (ymax < 0) {
+      lakeM = 0;
+      lakeIdle = true;
+      lakeDirty = true;
+      return;
+    }
+    xmin = Math.max(1, xmin - 2);
+    xmax = Math.min(gW - 2, xmax + 2);
+    ymin = Math.max(1, ymin - 2);
+    ymax = Math.min(gH - 2, ymax + 2);
+
+    absorbing = false;
+    if (ownActive) absorbStep(xmin, xmax, ymin, ymax);
+
+    for (y = ymin - 1; y <= ymax + 1; y++) {
+      row = y * gW;
+      for (x = xmin - 1; x <= xmax + 1; x++) {
+        i = row + x;
+        tmpv[i] = (phi[i - 1] + 2 * phi[i] + phi[i + 1]) * 0.25;
+      }
+    }
+    for (y = ymin; y <= ymax; y++) {
+      row = y * gW;
+      for (x = xmin; x <= xmax; x++) {
+        i = row + x;
+        var b = (tmpv[i - gW] + 2 * tmpv[i] + tmpv[i + gW]) * 0.25;
+        bl[i] = b;
+        var p0 = 0.5 + (b - 0.5) * KSH;
+        p0 = p0 < 0 ? 0 : (p0 > 1 ? 1 : p0);
+        var ad = p0 - phi[i];
+        if (ad < 0) ad = -ad;
+        var kk = KB + KBOOST * (ad > E0 ? ad - E0 : 0);
+        /* lange dünne Ausläufer: dort ist die Oberflächenspannung wirksamer als die Haftung, sie ziehen sich schneller zusammen */
+        var th = phi[i] > 0.6 ? (THIN_B - b) / THIN_W : 0;
+        th = th < 0 ? 0 : (th > 1 ? 1 : th);
+        if (th > 0) kk += THIN_K * th;
+        if (kk > 1) kk = 1;
+        wgt[i] = (1 - pin[i] * (1 - THIN_UNPIN * th)) * kk;
+      }
+    }
+
+    /* Menge vor dem Schritt: der Schritt darf Wasser verschieben, aber keins erzeugen */
+    var mBefore = 0;
+    for (y = ymin; y <= ymax; y++) { row = y * gW; for (x = xmin; x <= xmax; x++) mBefore += phi[row + x]; }
+
+    /* zusammenhängende Flächen benennen */
+    prevComp.set(compId);
+    compId.fill(0);
+    var K = 0, sp;
+    for (y = ymin; y <= ymax; y++) {
+      row = y * gW;
+      for (x = xmin; x <= xmax; x++) {
+        i = row + x;
+        if (phi[i] > 0.02 && compId[i] === 0 && K < MAXC) {
+          K++;
+          cMass[K] = 0;
+          cFreeM[K] = 0;
+          sp = 0;
+          cStack[sp++] = i;
+          compId[i] = K;
+          while (sp) {
+            var j = cStack[--sp], jx = j % gW;
+            cMass[K] += phi[j];
+            if (pin[j] < 0.3) cFreeM[K] += phi[j];
+            var o;
+            if (jx > xmin) { o = j - 1; if (compId[o] === 0 && phi[o] > 0.02) { compId[o] = K; cStack[sp++] = o; } }
+            if (jx < xmax) { o = j + 1; if (compId[o] === 0 && phi[o] > 0.02) { compId[o] = K; cStack[sp++] = o; } }
+            o = j - gW; if (compId[o] === 0 && phi[o] > 0.02 && o >= ymin * gW) { compId[o] = K; cStack[sp++] = o; }
+            o = j + gW; if (compId[o] === 0 && phi[o] > 0.02 && o < (ymax + 1) * gW) { compId[o] = K; cStack[sp++] = o; }
+          }
+        }
+      }
+    }
+
+    if (K < lakeLastK) lakeBoost = 70;
+    detectMerges(xmin, xmax, ymin, ymax, K, lakeLastK);
+    lakeLastK = K;
+
+    /* Wasser, das der Finger herauszieht, kommt aus der Fläche, an der er angesetzt hat */
+    var rc = 0;
+    if (pullRoot >= 0) {
+      var bx = pullRoot % gW, by = (pullRoot / gW) | 0, bestV = 0.3;
+      for (var dy = -3; dy <= 3; dy++) {
+        for (var dx = -3; dx <= 3; dx++) {
+          var qx = bx + dx, qy = by + dy;
+          if (qx < xmin || qx > xmax || qy < ymin || qy > ymax) continue;
+          var qi = qy * gW + qx;
+          if (compId[qi] > 0 && phi[qi] > bestV) { bestV = phi[qi]; rc = compId[qi]; }
+        }
+      }
+    }
+    for (c = 1; c <= K; c++) {
+      cTgt[c] = cMass[c];
+      cLo[c] = 0.2;
+      cHi[c] = 0.8;
+      cTh[c] = 0.5;
+    }
+    if (rc > 0 && debtPending > 0.3) {
+      /* Das Wasser der Arme fehlt im See: der freie Rand zieht sich zurück (Arme selbst sind festgehalten) */
+      var em = 0;
+      for (y = ymin; y <= ymax; y++) {
+        row = y * gW;
+        for (x = xmin; x <= xmax; x++) {
+          i = row + x;
+          if (compId[i] === rc && phi[i] > 0.02 && phi[i] < 0.98 && pin[i] < 0.3) em += phi[i];
+        }
+      }
+      if (em > 0.5) {
+        var fr = Math.min(0.5, Math.min(debtPending, 12) / em);
+        for (y = ymin; y <= ymax; y++) {
+          row = y * gW;
+          for (x = xmin; x <= xmax; x++) {
+            i = row + x;
+            if (compId[i] === rc && phi[i] > 0.02 && phi[i] < 0.98 && pin[i] < 0.3) phi[i] *= 1 - fr;
+          }
+        }
+        debtPending -= fr * em;
+        lakeM -= fr * em;
+        cMass[rc] -= fr * em;
+      }
+    }
+    if (rc > 0) {
+      if (pullM0 < 0) pullM0 = cMass[rc];
+      cTgt[rc] = Math.max(0.15 * pullM0, cMass[rc] - debtPending);
+      lakeFree = cMass[rc] > 1 ? cFreeM[rc] / cMass[rc] : 1;
+      lakeFreeM = cFreeM[rc];
+    }
+
+    for (var it = 0; it < 9; it++) {
+      for (c = 1; c <= K; c++) cM[c] = 0;
+      for (y = ymin; y <= ymax; y++) {
+        row = y * gW;
+        for (x = xmin; x <= xmax; x++) {
+          i = row + x;
+          c = compId[i];
+          if (c === 0) continue;
+          var p = 0.5 + (bl[i] - cTh[c]) * KSH;
+          p = p < 0 ? 0 : (p > 1 ? 1 : p);
+          cM[c] += phi[i] + wgt[i] * (p - phi[i]);
+        }
+      }
+      for (c = 1; c <= K; c++) {
+        if (cM[c] > cTgt[c]) cLo[c] = cTh[c]; else cHi[c] = cTh[c];
+        cTh[c] = (cLo[c] + cHi[c]) * 0.5;
+      }
+    }
+    if (rc > 0) {
+      var left = cM[rc] - cTgt[rc];
+      debtPending = left > 0 ? left : 0;
+    }
+
+    var maxD = 0, pinMax = 0, total = 0;
+    for (y = ymin; y <= ymax; y++) {
+      row = y * gW;
+      for (x = xmin; x <= xmax; x++) {
+        i = row + x;
+        c = compId[i];
+        var q = 0.5 + (bl[i] - (c ? cTh[c] : 0.5)) * KSH;
+        q = q < 0 ? 0 : (q > 1 ? 1 : q);
+        var nv = phi[i] + wgt[i] * (q - phi[i]);
+        var dv = nv - phi[i];
+        if (dv < 0) dv = -dv;
+        if (dv > maxD) maxD = dv;
+        phi[i] = nv;
+        total += nv;
+        if (pin[i] > 0) {
+          /* im Inneren einer Fläche gibt es nichts mehr festzuhalten */
+          var inner = phi[i] > 0.97 && phi[i - 1] > 0.97 && phi[i + 1] > 0.97 && phi[i - gW] > 0.97 && phi[i + gW] > 0.97;
+          var fl = inner ? 0 : PIN_FLOOR;
+          pin[i] -= inner ? PIN_STEP * 4 : PIN_STEP;
+          if (pin[i] < fl) pin[i] = fl;
+          if (pin[i] > PIN_FLOOR + 0.002 && pin[i] > pinMax) pinMax = pin[i];
+        }
+      }
+    }
+    if (total > mBefore + 1e-4 && total > 0) {
+      /* Randzellen außerhalb einer Fläche sind gewachsen: auf die Menge vorher zurückskalieren */
+      var kc = mBefore / total;
+      for (y = ymin; y <= ymax; y++) { row = y * gW; for (x = xmin; x <= xmax; x++) phi[row + x] *= kc; }
+      total = mBefore;
+    }
+    lakeM = total;
+    lakeDirty = true;
+    if (!pulling && debtPending < 0.05) { pullRoot = -1; debtPending = 0; }
+    if (maxD < 0.002 && pinMax <= 0 && debtPending < 0.05 && !absorbing) {
+      if (++lakeQuiet > 12) lakeIdle = true;
+    } else {
+      lakeQuiet = 0;
+    }
+  }
+
+  /* Alle Wasserflächen zerfallen zu Tropfen (Glas wird gekippt) */
+  function lakesToDrops() {
+    if (!phi) return;
+    var n = gw * gh, seen = new Uint8Array(n), stack = new Int32Array(n), i;
+    for (i = 0; i < n; i++) {
+      if (seen[i] || phi[i] < 0.02) continue;
+      var sp = 0, mass = 0, sx = 0, sy = 0, cells = [];
+      stack[sp++] = i;
+      seen[i] = 1;
+      while (sp) {
+        var j = stack[--sp], jx = j % gw, jy = (j / gw) | 0;
+        mass += phi[j];
+        sx += phi[j] * (jx + 0.5) * CS;
+        sy += phi[j] * (jy + 0.5) * CS;
+        cells.push(j);
+        var nb = [jx > 0 ? j - 1 : -1, jx < gw - 1 ? j + 1 : -1, jy > 0 ? j - gw : -1, jy < gh - 1 ? j + gw : -1];
+        for (var q = 0; q < 4; q++) {
+          var o = nb[q];
+          if (o >= 0 && !seen[o] && phi[o] >= 0.02) { seen[o] = 1; stack[sp++] = o; }
+        }
+      }
+      var area = mass * CS * CS;
+      if (area >= 12) addDrop(sx / mass, sy / mass, Math.min(60, Math.sqrt(area / Math.PI)));
+      for (var c = 0; c < cells.length; c++) { phi[cells[c]] = 0; pin[cells[c]] = 0; }
+    }
+    lakeM = 0;
+    lakeIdle = true;
+    lakeDirty = true;
+    if (own) own.fill(0);
+    ownActive = false;
+  }
+
+
+  /* Wasser von der oberen Kontur abtragen: Die Kante zieht sich dort, wo der Rand nach oben zeigt, gleichmäßig nach innen (und damit relativ nach unten).
+     Rand weiter unten und an den Seiten wird kaum berührt. Es entsteht keine gerade Schnittkante. */
+  function erodeTop(cells, need, gx, gy) {
+    var pass, k, j, cnt = cells.length, rim = [], wts = [];
+    for (pass = 0; pass < 80 && need > 0.01; pass++) {
+      rim.length = 0; wts.length = 0;
+      var W = 0;
+      for (k = 0; k < cnt; k++) {
+        j = cells[k];
+        if (phi[j] < 0.02) continue;
+        var nx = 0, ny = 0;
+        if (phi[j - 1] < 0.3) nx -= 1;
+        if (phi[j + 1] < 0.3) nx += 1;
+        if (phi[j - gw] < 0.3) ny -= 1;
+        if (phi[j + gw] < 0.3) ny += 1;
+        if (!nx && !ny) continue;
+        var nl = Math.hypot(nx, ny), u = -(nx * gx + ny * gy) / nl;
+        if (u <= 0.05) continue;
+        var w = u;
+        rim.push(j); wts.push(w); W += w;
+      }
+      if (!rim.length) break;
+      var give = Math.min(need, W * 0.6);
+      for (k = 0; k < rim.length; k++) {
+        j = rim[k];
+        var tk = Math.min(phi[j], give * wts[k] / W);
+        phi[j] -= tk; need -= tk; lakeM -= tk;
+        if (phi[j] < 0.02) { phi[j] = 0; pin[j] = 0; }
+      }
+    }
+    return need;
+  }
+
+  /* Gekippte Glasfläche: Seen bleiben als Fläche bestehen, bilden unten eine Ausstülpung und laufen in Armen
+     mit vorauslaufendem Tropfen aus; oben zieht sich die Fläche dünner werdend zusammen */
+  function drainStep(leak) {
+    var n = gw * gh, i, j, k;
+    if (!dSeen || dSeen.length !== n) { dSeen = new Uint8Array(n); dStack = new Int32Array(n); }
+    dSeen.fill(0);
+    var gl0 = Math.hypot(grav.x, grav.y) || 1, gx = grav.x / gl0, gy = grav.y / gl0;
+    var rs = rSlide(), found = false;
+    for (i = 0; i < n; i++) {
+      if (dSeen[i] || phi[i] < 0.3) continue;
+      var sp = 0, cells = [], mass = 0, sx = 0, sy = 0;
+      dStack[sp++] = i;
+      dSeen[i] = 1;
+      while (sp) {
+        j = dStack[--sp];
+        var jx = j % gw, jy = (j / gw) | 0;
+        cells.push(j);
+        mass += phi[j];
+        sx += phi[j] * (jx + 0.5) * CS;
+        sy += phi[j] * (jy + 0.5) * CS;
+        var nb = [jx > 0 ? j - 1 : -1, jx < gw - 1 ? j + 1 : -1, jy > 0 ? j - gw : -1, jy < gh - 1 ? j + gw : -1];
+        for (var q = 0; q < 4; q++) {
+          var o = nb[q];
+          if (o >= 0 && !dSeen[o] && phi[o] >= 0.3) { dSeen[o] = 1; dStack[sp++] = o; }
+        }
+      }
+      found = true;
+      /* Auslaufen einzelner gesättigter Seen im Seen-Modus: ab dieser Größe hält die Haftung das Wasser nicht mehr, es bricht nach unten durch */
+      if (leak && mass * CS * CS < Math.PI * LEAK_K * LEAK_K * rs * rs) continue;
+      var rr = Math.max(3.2, Math.min(rs * rnd(0.85, 1.15), 9));
+      var Ar = Math.PI * rr * rr / (CS * CS);
+      if (mass < Ar * 1.7) {
+        /* Rest: wird zu einem letzten Tropfen */
+        var cx = sx / mass, cy = sy / mass, ar = mass * CS * CS;
+        for (k = 0; k < cells.length; k++) { phi[cells[k]] = 0; pin[cells[k]] = 0; }
+        addDrop(cx, cy, Math.max(1.5, Math.sqrt(ar / Math.PI)));
+        lakeM = Math.max(0, lakeM - mass);
+        continue;
+      }
+      /* große Flächen laufen sofort und an mehreren Stellen aus, kleine bilden erst eine Ausstülpung und lassen sich Zeit */
+      var big = mass > 110;
+      var nSp = big ? Math.min(7, 2 + Math.floor(mass / 60)) : (Math.random() < 0.22 ? 1 : 0);
+      if (leak) {
+        if (Math.random() > 0.7) continue;
+        nSp = Math.min(5, 1 + Math.floor(mass * CS * CS / (Math.PI * LEAK_K * LEAK_K * rs * rs)));
+        big = true;
+      }
+      if (!nSp) {
+        /* Sack: die untere Kante wölbt sich nach unten aus */
+        if (mass > Ar * 2.2) {
+          var sMx = -1e9, sK = 0;
+          for (k = 0; k < cells.length; k++) {
+            j = cells[k];
+            var sv = gx * ((j % gw) + 0.5) * CS + gy * (((j / gw) | 0) + 0.5) * CS;
+            if (sv > sMx) { sMx = sv; sK = j; }
+          }
+          var sb = lakeDisc(((sK % gw) + 0.5) * CS + gx * rr * 0.35, (((sK / gw) | 0) + 0.5) * CS + gy * rr * 0.35, rr * 1.1, false, false);
+          var sc0 = new Float64Array(cells.length), ord0 = [];
+          for (k = 0; k < cells.length; k++) { j = cells[k]; sc0[k] = gx * ((j % gw) + 0.5) * CS + gy * (((j / gw) | 0) + 0.5) * CS; ord0.push(k); }
+          ord0.sort(function (a1, b1) { return sc0[a1] - sc0[b1]; });
+          var nd = erodeTop(cells, sb * 0.9, gx, gy);
+          for (k = 0; k < ord0.length && nd > 0; k++) {
+            j = cells[ord0[k]];
+            var tk = Math.min(phi[j], nd);
+            phi[j] -= tk; nd -= tk; lakeM -= tk;
+            if (phi[j] < 0.02) { phi[j] = 0; pin[j] = 0; }
+          }
+        }
+        continue;
+      }
+      var sMax = -1e9, sc = new Float64Array(cells.length);
+      for (k = 0; k < cells.length; k++) {
+        j = cells[k];
+        sc[k] = gx * ((j % gw) + 0.5) * CS + gy * (((j / gw) | 0) + 0.5) * CS;
+        if (sc[k] > sMax) sMax = sc[k];
+      }
+      var cand = [];
+      for (k = 0; k < cells.length; k++) if (sc[k] > sMax - (big ? 8 : 4) * CS) cand.push(cells[k]);
+      var need = 0;
+      for (var ns = 0; ns < nSp; ns++) {
+        var rr2 = Math.max(3.2, Math.min(rs * rnd(0.85, 1.2), 9));
+        var Ar2 = Math.PI * rr2 * rr2 / (CS * CS);
+        var cj = cand[(Math.random() * cand.length) | 0];
+        var bx = ((cj % gw) + 0.5) * CS, by = (((cj / gw) | 0) + 0.5) * CS;
+        var armL = rr2 * 1.2 + 8;
+        var bulge = lakeDisc(bx + gx * rr2 * 0.4, by + gy * rr2 * 0.4, rr2 * 1.05, false, false);
+        var tx = bx + gx * (rr2 * 0.4 + armL), ty = by + gy * (rr2 * 0.4 + armL);
+        var arm = 0;
+        for (var a = 0; a <= 4; a++) arm += lakeDisc(bx + (tx - bx) * a / 4, by + (ty - by) * a / 4, 2.4, false, false);
+        var dd = addDrop(tx + gx * rr2 * 0.3, ty + gy * rr2 * 0.3, rr2);
+        dd.slide = true;
+        dd.phase = 1;
+        dd.timer = 12;
+        dd.hx = gx;
+        dd.hy = gy;
+        dd.age = 60;
+        dd.nm = 25;
+        dd.vx = gx * 1.2;
+        dd.vy = gy * 1.2;
+        need += Ar2 + bulge + arm;
+      }
+      /* Das Wasser dafür kommt von der oberen Kante der Fläche, die sich dadurch von oben nach unten zusammenzieht */
+      need = erodeTop(cells, need, gx, gy);
+      var ord = [];
+      for (k = 0; k < cells.length; k++) ord.push(k);
+      ord.sort(function (a1, b1) { return sc[a1] - sc[b1]; });
+      for (k = 0; k < ord.length && need > 0; k++) {
+        j = cells[ord[k]];
+        var take = Math.min(phi[j], need);
+        phi[j] -= take;
+        need -= take;
+        lakeM -= take;
+        if (phi[j] < 0.02) { phi[j] = 0; pin[j] = 0; }
+      }
+    }
+    if (!found && !leak) { lakesToDrops(); lakeMode = false; draining = false; return; }
+    lakeDirty = true;
+    lakeIdle = false;
+    lakeQuiet = 0;
+    lakeBoost = Math.max(lakeBoost, 10);
+  }
+
+
+  /* Wasser, das in eine Fläche gelangt, muss deren Menge erhöhen, auch wenn es dort liegt, wo schon Wasser ist:
+     was die Scheibe nicht neu abdeckt, wird in den nächsten Schritten am Rand der Fläche angelagert */
+  var growQ = [];
+  /* Größe, ab der dieser Tropfen zur Wasserfläche wird: jeder etwas anders */
+  function lakeR(d) {
+    if (!d.lk) d.lk = LAKE_R0 * (1 + 0.2 * Math.random());
+    return d.lk;
+  }
+  /* Wasserfläche mit unregelmäßigem, haftendem Rand statt Kreis; gleiche Menge wie die runde Scheibe */
+  function lakeBlob(x, y, r) {
+    var ph = [Math.random() * TAU, Math.random() * TAU, Math.random() * TAU, Math.random() * TAU];
+    var am = [0.1 + 0.08 * Math.random(), 0.07 + 0.05 * Math.random(), 0.05 + 0.04 * Math.random(), 0.03 + 0.03 * Math.random()];
+    var R = r * 1.5 + 2 * CS;
+    var x0 = Math.max(1, Math.floor((x - R) / CS)), x1 = Math.min(gw - 2, Math.ceil((x + R) / CS));
+    var y0 = Math.max(1, Math.floor((y - R) / CS)), y1 = Math.min(gh - 2, Math.ceil((y + R) / CS));
+    var delta = 0, iy, ix, k;
+    for (iy = y0; iy <= y1; iy++) {
+      for (ix = x0; ix <= x1; ix++) {
+        var ddx = (ix + 0.5) * CS - x, ddy = (iy + 0.5) * CS - y, dd = Math.hypot(ddx, ddy), th = Math.atan2(ddy, ddx);
+        var g = 1;
+        for (k = 0; k < 4; k++) g += am[k] * Math.cos((k + 2) * th + ph[k]);
+        var p = 0.5 + (r * g - dd) / (2 * CS);
+        if (p <= 0) continue;
+        if (p > 1) p = 1;
+        var i = iy * gw + ix;
+        if (p > phi[i]) {
+          delta += p - phi[i];
+          if (phi[i] < 0.8) pin[i] = 1;
+          phi[i] = p;
+        }
+      }
+    }
+    lakeM += delta;
+    lakeDirty = true;
+    lakeIdle = false;
+    lakeQuiet = 0;
+    var rem = Math.PI * r * r / (CS * CS) - delta;
+    if (rem > 0.25) growQ.push({ x: x, y: y, m: rem });
+    return delta;
+  }
+  function lakeAddWater(x, y, r) {
+    var delta = lakeDisc(x, y, r, true, false);
+    var rem = Math.PI * r * r / (CS * CS) - delta;
+    if (rem > 0.25) growQ.push({ x: x, y: y, m: rem });
+    return delta;
+  }
+  function growStep() {
+    var n = gw * gh, cnt = 0;
+    while (growQ.length && cnt < 3) {
+      var g = growQ[0];
+      cnt++;
+      /* nächste Wasserzelle suchen */
+      var cx = Math.floor(g.x / CS), cy = Math.floor(g.y / CS), seed = -1, rr, ax, ay;
+      for (rr = 0; rr <= 10 && seed < 0; rr++) {
+        for (ay = -rr; ay <= rr && seed < 0; ay++) {
+          for (ax = -rr; ax <= rr; ax++) {
+            if (Math.max(Math.abs(ax), Math.abs(ay)) !== rr) continue;
+            var qx = cx + ax, qy = cy + ay;
+            if (qx < 1 || qy < 1 || qx > gw - 2 || qy > gh - 2) continue;
+            if (phi[qy * gw + qx] > 0.5) { seed = qy * gw + qx; break; }
+          }
+        }
+      }
+      if (seed < 0) { growQ.shift(); continue; }
+      if (!dSeen || dSeen.length !== n) { dSeen = new Uint8Array(n); dStack = new Int32Array(n); }
+      dSeen.fill(0);
+      var sp = 0, cells = [], j;
+      dStack[sp++] = seed;
+      dSeen[seed] = 1;
+      while (sp) {
+        j = dStack[--sp];
+        cells.push(j);
+        var jx = j % gw, jy = (j / gw) | 0;
+        var nb = [jx > 1 ? j - 1 : -1, jx < gw - 2 ? j + 1 : -1, jy > 1 ? j - gw : -1, jy < gh - 2 ? j + gw : -1];
+        for (var q = 0; q < 4; q++) {
+          var o = nb[q];
+          if (o >= 0 && !dSeen[o] && phi[o] >= 0.02) { dSeen[o] = 1; dStack[sp++] = o; }
+        }
+      }
+      var ring = [], cap = 0;
+      for (var k = 0; k < cells.length; k++) {
+        j = cells[k];
+        var jx2 = j % gw, jy2 = (j / gw) | 0;
+        if (phi[j] < 0.98) { ring.push(j); cap += 0.98 - phi[j]; }
+        var nb2 = [j - 1, j + 1, j - gw, j + gw];
+        for (var q2 = 0; q2 < 4; q2++) {
+          var o2 = nb2[q2];
+          if (o2 > gw && o2 < n - gw && !dSeen[o2] && phi[o2] < 0.02 && phi[j] > 0.6 && jx2 > 1 && jx2 < gw - 2 && jy2 > 1 && jy2 < gh - 2) {
+            dSeen[o2] = 1;
+            ring.push(o2);
+            cap += 0.98;
+          }
+        }
+      }
+      if (cap < 0.1) { growQ.shift(); continue; }
+      var take = Math.min(g.m, 16), fr = Math.min(1, take / cap);
+      for (var r2 = 0; r2 < ring.length; r2++) {
+        var cj = ring[r2], add = (0.98 - phi[cj]) * fr;
+        phi[cj] += add;
+        lakeM += add;
+      }
+      g.m -= cap * fr;
+      lakeDirty = true;
+      lakeIdle = false;
+      lakeQuiet = 0;
+      if (g.m < 0.2) growQ.shift();
+    }
+  }
+
+  function lakeFrame(f) {
+    var want = grav.m < (lakeMode ? FLAT_OFF : FLAT_ON);
+    if (lakeMode && !want) {
+      if (lakeM > 3) draining = true;
+      else { lakesToDrops(); lakeMode = false; draining = false; return; }
+    } else if (draining) draining = false;
+    if (!lakeMode) {
+      if (!want) return;
+      lakeMode = true;
+    }
+    var n = drops.length, i, d, rr;
+    for (i = 0; i < n; i++) {
+      d = drops[i];
+      if (d.dead || d.into || d.ghost > 0) continue;
+      if (!d.held && !draining && d.r >= lakeR(d) && (!d.slide || grav.m < FLAT_ON)) {
+        /* ein großer ruhender Tropfen wird fließend zum kleinen See: gleiche Fläche, zunächst rund; seine Form ändert sich erst dort,
+           wo er weitere Tröpfchen aufnimmt */
+        lakeAddWater(d.x, d.y, d.r);
+        d.ghost = 10;
+        d.nm = 999;
+        continue;
+      }
+      if (lakeM > 2) {
+        rr = d.r;
+        if (lakeAt(d.x, d.y) > 0.45 || lakeAt(d.x + rr, d.y) > 0.45 || lakeAt(d.x - rr, d.y) > 0.45 ||
+            lakeAt(d.x, d.y + rr) > 0.45 || lakeAt(d.x, d.y - rr) > 0.45) {
+          if (d.ch) paintBodyToLake(d); else lakeAddWater(d.x, d.y, rr);
+          if (pulling) pullBonus += Math.PI * rr * rr / (CS * CS) * 0.8;
+          d.dead = true;
+        }
+      }
+    }
+    if (growQ.length) growStep();
+    if (draining && tick % 2 === 0) drainStep();
+    else if (!draining && lakeMode && grav.m > 0.04 && tick % 10 === 0) drainStep(true);
+    if (lakeBoost > 0) lakeBoost -= f;
+    if (lakeM > 0.5 && !lakeIdle) {
+      if (lakeBoost > 0) { lakeStep(); lakeStep(); } else if ((tick & 1) === 0) lakeStep();
+    }
+  }
+
+
+
+  var FR = 17;   /* Fingerradius: Breite des Kopfes und größte Breite eines gezogenen Arms */
+  /* Ein mitgeführter Wasserkörper ist eine Kette aus Kreisen an einem Faden durch ihre Mittelpunkte; außen hält ein Gummiband
+     (die Hülle der Kreise) alles zusammen. Kopf = Kreis 0 unter dem Finger. Hängt der Körper noch an einer Wasserfläche, ist der letzte
+     Kreis dort festgehalten und genauso groß wie der Kopf; dazwischen verjüngen sich die Kreise linear bis zur Mitte. Hängt er an nichts,
+     läuft der Schweif zum Ende hin aus. Der Faden ist völlig biegsam: die Kreise folgen der Bewegung mit Verzögerung. */
+  var NCH = 14, BREAK_W = 2.5, LCAP = 8 * FR;
+  var VCAP = Math.PI * FR * FR + 1.5 * FR * LCAP;
+  function chainInit(d, ax, ay) {
+    d.ch = [];
+    for (var i = 0; i < NCH; i++) { var t = i / (NCH - 1); d.ch.push({ x: d.x + (ax - d.x) * t, y: d.y + (ay - d.y) * t }); }
+  }
+  function chainLen(d) {
+    var c = d.ch, L = 0;
+    if (!c) return 0;
+    for (var i = 1; i < c.length; i++) L += Math.hypot(c[i].x - c[i - 1].x, c[i].y - c[i - 1].y);
+    return L;
+  }
+  function headR(d) { return d.anc ? FR : freeGeo(d).R; }
+  /* kleinste Breite (halber Durchmesser) eines angehängten Arms: aus der Menge, die im Arm steckt */
+  function armMin(d, L) {
+    var R = FR, v = (Math.PI * d.r * d.r - Math.PI * R * R) / Math.max(L, 1) - R;
+    return v < 0 ? 0 : (v > R ? R : v);
+  }
+  /* freier Schweif: läuft spitz aus und wird mit der Menge länger, höchstens LCAP; noch mehr Wasser sammelt sich im Kopf am Finger */
+  function freeGeo(d) {
+    var V = Math.PI * d.r * d.r, R = Math.min(FR, d.r), L = Math.max(0, V - Math.PI * R * R) / (R + 1.5);
+    if (L > LCAP) {
+      L = LCAP;
+      R = (-LCAP + Math.sqrt(LCAP * LCAP - 4 * Math.PI * (1.5 * LCAP - V))) / (2 * Math.PI);
+    }
+    return { R: R, L: L };
+  }
+  /* geht die Kreise entlang (Kopf, dann die Hülle zwischen den Kreisen) */
+  function chainEach(d, cb) {
+    var R = headR(d);
+    cb(d.x, d.y, R);
+    if (!d.ch) return;
+    var c = d.ch, n = c.length, L = chainLen(d);
+    if (L < 1) return;
+    var att = !!d.anc, rmin = att ? armMin(d, L) : 0, s = 0, i, k;
+    for (i = 0; i < n - 1; i++) {
+      var sx = c[i + 1].x - c[i].x, sy = c[i + 1].y - c[i].y, sl = Math.hypot(sx, sy), steps = Math.max(1, Math.ceil(sl / (CS * 0.75)));
+      for (k = 1; k <= steps; k++) {
+        var u = k / steps, t = (s + sl * u) / L;
+        var r = att ? R - (R - rmin) * (1 - Math.abs(2 * t - 1)) : R + (1.5 - R) * t;
+        if (r > 0.8) cb(c[i].x + sx * u, c[i].y + sy * u, r);
+      }
+      s += sl;
+    }
+  }
+  function updChain(d, f) {
+    if (d.r < 12 && !d.anc) { d.ch = null; return; }
+    if (!d.ch) chainInit(d, d.x, d.y);
+    var c = d.ch, n = c.length, i, it;
+    c[0].x = d.x;
+    c[0].y = d.y;
+    {
+      /* freier Schweif: die Kreise hängen am Faden hinter dem Kopf und werden nur gezogen, nie geschoben */
+      var seg = freeGeo(d).L / (n - 1);
+      for (i = 1; i < n; i++) {
+        var dx = c[i].x - c[i - 1].x, dy = c[i].y - c[i - 1].y, dl = Math.hypot(dx, dy);
+        if (dl > seg) { c[i].x = c[i - 1].x + dx / dl * seg; c[i].y = c[i - 1].y + dy / dl * seg; }
+      }
+      var k2 = Math.min(0.3, 0.05 * f);
+      for (i = 1; i < n - 1; i++) {
+        c[i].x += ((c[i - 1].x + c[i + 1].x) * 0.5 - c[i].x) * k2;
+        c[i].y += ((c[i - 1].y + c[i + 1].y) * 0.5 - c[i].y) * k2;
+      }
+    }
+  }
+  function diskB(arr, x, y, r) {
+    var R = r + 2 * CS;
+    var x0 = Math.max(1, Math.floor((x - R) / CS)), x1 = Math.min(gw - 2, Math.ceil((x + R) / CS));
+    var y0 = Math.max(1, Math.floor((y - R) / CS)), y1 = Math.min(gh - 2, Math.ceil((y + R) / CS));
+    for (var iy = y0; iy <= y1; iy++) {
+      for (var ix = x0; ix <= x1; ix++) {
+        var dd = Math.hypot((ix + 0.5) * CS - x, (iy + 0.5) * CS - y);
+        var p = 0.5 + (r - dd) / (2 * CS);
+        if (p <= 0) continue;
+        if (p > 1) p = 1;
+        var i = iy * gw + ix;
+        if (p > arr[i]) arr[i] = p;
+      }
+    }
+  }
+  /* zeichnet den Körper in ein Feld (bphi für die Darstellung) */
+  function paintBody(d, arr) {
+    chainEach(d, function (x, y, r) { diskB(arr, x, y, r); });
+  }
+
+  /* ---------- Finger zieht einen Wasserarm ----------
+     Im See tut der Finger nichts, das Wasser schließt sich um ihn. Verlässt er den See, legt er an seiner Stelle normales
+     Seewasser in voller Fingerbreite ab; das Wasser dafür kommt gleichmäßig aus der Fläche, mit der der Arm verbunden ist.
+     Reicht es für einen vollen Schritt nicht mehr, endet der Arm (rund, in voller Breite). Zusammengewischte Tropfen
+     kommen in einen Vorrat und werden zuerst verbraucht. Wasser entsteht und verschwindet dabei nie. */
+  var penRes = 0, ARM_KEEP = 8, armMark = null, armGid = 0, SMALL_LAKE = Math.PI * 32 * 32 / 16;
+  /* was der Finger in dieser Bewegung abgelegt hat, der Reihe nach: so kann das hintere Ende nachwandern */
+  var armQ = [], armQh = 0;
+  function penCells(x, y, cb, rr) {
+    var FRr = rr || FR, R = FRr + CS;
+    var x0 = Math.max(1, Math.floor((x - R) / CS)), x1 = Math.min(gw - 2, Math.ceil((x + R) / CS));
+    var y0 = Math.max(1, Math.floor((y - R) / CS)), y1 = Math.min(gh - 2, Math.ceil((y + R) / CS));
+    for (var iy = y0; iy <= y1; iy++) {
+      for (var ix = x0; ix <= x1; ix++) {
+        var cx = (ix + 0.5) * CS, cy = (iy + 0.5) * CS, p = 0.5 + (FRr - Math.hypot(cx - x, cy - y)) / (2 * CS);
+        if (p <= 0) continue;
+        cb(iy * gw + ix, p > 1 ? 1 : p, cx, cy);
+      }
+    }
+  }
+  /* die Fläche unter dem Finger (falls er an einer hängt) und ihr Wasser ohne den gerade gezogenen Arm */
+  function penSource(x, y) {
+    var seed = -1, best = 0.5;
+    penCells(x, y, function (i) { if (phi[i] > best) { best = phi[i]; seed = i; } });
+    if (seed < 0) return null;
+    var n = gw * gh;
+    if (!dSeen || dSeen.length !== n) { dSeen = new Uint8Array(n); dStack = new Int32Array(n); }
+    dSeen.fill(0);
+    var sp = 0, far = [], mFar = 0;
+    dStack[sp++] = seed;
+    dSeen[seed] = 1;
+    while (sp) {
+      var j = dStack[--sp], jx = j % gw, jy = (j / gw) | 0;
+      if (armMark[j] !== armGid) { far.push(j); mFar += phi[j]; }
+      if (jx > 1 && !dSeen[j - 1] && phi[j - 1] >= 0.02) { dSeen[j - 1] = 1; dStack[sp++] = j - 1; }
+      if (jx < gw - 2 && !dSeen[j + 1] && phi[j + 1] >= 0.02) { dSeen[j + 1] = 1; dStack[sp++] = j + 1; }
+      if (jy > 1 && !dSeen[j - gw] && phi[j - gw] >= 0.02) { dSeen[j - gw] = 1; dStack[sp++] = j - gw; }
+      if (jy < gh - 2 && !dSeen[j + gw] && phi[j + gw] >= 0.02) { dSeen[j + gw] = 1; dStack[sp++] = j + gw; }
+    }
+    return { far: far, m: mFar };
+  }
+  function penNeed(x, y, rr) {
+    var need = 0;
+    penCells(x, y, function (i, p) { if (p > phi[i]) need += p - phi[i]; }, rr);
+    return need;
+  }
+  function nearFinger(i, x, y) {
+    var dx = (i % gw + 0.5) * CS - x, dy = (((i / gw) | 0) + 0.5) * CS - y, R = FR + 2 * CS;
+    return dx * dx + dy * dy < R * R;
+  }
+  /* Wasser vom hinteren Ende des Arms (älteste Ablage zuerst), nie unter dem Finger */
+  function armTailMass(x, y) {
+    var m = 0;
+    for (var q = armQh; q < armQ.length; q++) { var e = armQ[q]; if (e.a > 0 && !nearFinger(e.i, x, y)) m += Math.min(e.a, phi[e.i]); }
+    return m;
+  }
+  function armTailTake(amount, x, y) {
+    var got = 0;
+    for (var q = armQh; q < armQ.length && got < amount; q++) {
+      var e = armQ[q];
+      if (e.a <= 0 || nearFinger(e.i, x, y)) continue;
+      var t = Math.min(e.a, phi[e.i], amount - got);
+      phi[e.i] -= t;
+      e.a -= t;
+      got += t;
+      if (phi[e.i] < 0.02) e.a = 0;
+    }
+    while (armQh < armQ.length && armQ[armQh].a <= 0) armQh++;
+    if (armQh > 4096) { armQ = armQ.slice(armQh); armQh = 0; }
+    return got;
+  }
+  function penMove(x0, y0, x1, y1) {
+    if (!gw) return;
+    var len = Math.hypot(x1 - x0, y1 - y0), st = Math.max(1, Math.ceil(len / (CS * 0.5)));
+    var src = penSource(x0, y0), avail = src ? Math.max(0, Math.min(src.m - ARM_KEEP, 0.9 * src.m)) : 0, used = 0, gained = 0;
+    if (src && src.m < SMALL_LAKE && src.far.length) {
+      /* ein kleiner See wird ganz zum hinteren Ende des Arms: er wird von seiner fernen Seite her nachgezogen */
+      var fr = src.far.slice().sort(function (a, b) {
+        var ax = (a % gw + 0.5) * CS - x0, ay = (((a / gw) | 0) + 0.5) * CS - y0, bx = (b % gw + 0.5) * CS - x0, by = (((b / gw) | 0) + 0.5) * CS - y0;
+        return (bx * bx + by * by) - (ax * ax + ay * ay);
+      });
+      var lead = [];
+      for (var q0 = 0; q0 < fr.length; q0++) { lead.push({ i: fr[q0], a: phi[fr[q0]] }); armMark[fr[q0]] = armGid; }
+      armQ = lead.concat(armQ.slice(armQh));
+      armQh = 0;
+      src = null;
+      avail = 0;
+    }
+    var tail = armTailMass(x1, y1);
+    for (var k = 1; k <= st; k++) {
+      var nx = x0 + (x1 - x0) * k / st, ny = y0 + (y1 - y0) * k / st, rr = FR;
+      var need = penNeed(nx, ny, rr);
+      if (need <= 0) continue;
+      /* Was am Finger hängt, bleibt am Finger: reicht das Wasser nicht für volle Breite, wird der Arm schmaler */
+      var supply = penRes + (avail - used) + tail;
+      while (need > supply && rr > 3) { rr -= 1.5; need = penNeed(nx, ny, rr); }
+      if (need <= 0 || need > supply) continue;
+      /* erst einsammeln (Vorrat, See, hinteres Armende), dann genau so viel ablegen */
+      var left = need, fromRes = Math.min(penRes, left);
+      penRes -= fromRes;
+      gained += fromRes;
+      left -= fromRes;
+      var fromSrc = Math.min(avail - used, left);
+      used += fromSrc;
+      left -= fromSrc;
+      var got = 0;
+      if (left > 0) {
+        /* der See ist leer: das hintere Ende des Arms wandert nach */
+        got = armTailTake(left, nx, ny);
+        tail -= got;
+      }
+      var have = fromRes + fromSrc + got, sc = have >= need ? 1 : have / need;
+      if (have <= 0) continue;
+      penCells(nx, ny, function (i, p) {
+        if (p <= phi[i]) return;
+        var a = (p - phi[i]) * sc;
+        armQ.push({ i: i, a: a });
+        phi[i] += a;
+        armMark[i] = armGid;
+        if (pin[i] < PIN_FLOOR) pin[i] = PIN_FLOOR;
+      }, rr);
+    }
+    if (used > 0 && src && src.m > 0) {
+      /* das Wasser für den Arm kommt gleichmäßig aus der verbundenen Fläche (nicht aus dem Arm selbst) */
+      var f = Math.min(0.9, used / src.m), far = src.far;
+      for (var q = 0; q < far.length; q++) phi[far[q]] *= 1 - f;
+    }
+    lakeM += gained;
+    lakeDirty = true;
+    lakeIdle = false;
+    lakeQuiet = 0;
+  }
+  /* Tropfen, die der Finger berührt, gehen in den Vorrat */
+  function penDrops(x, y, px, py) {
+    var sdx = x - px, sdy = y - py, sl2 = sdx * sdx + sdy * sdy;
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+      if (d.dead || d.ghost > 0 || d.into) continue;
+      var tt = sl2 > 0 ? Math.max(0, Math.min(1, ((d.x - px) * sdx + (d.y - py) * sdy) / sl2)) : 1;
+      if (Math.hypot(d.x - (px + sdx * tt), d.y - (py + sdy * tt)) < FR + d.r) {
+        penRes += Math.PI * d.r * d.r / (CS * CS);
+        d.dead = true;
+      }
+    }
+  }
+  /* Finger hebt ab: der Rest des Vorrats bleibt unter ihm liegen */
+  function penRelease(x, y) {
+    if (penRes <= 0.01 || !gw) { penRes = 0; return; }
+    var net = 0;
+    penCells(x, y, function (i, p) {
+      if (penRes <= 0) return;
+      var add = p - phi[i];
+      if (add <= 0) return;
+      if (add > penRes) add = penRes;
+      phi[i] += add;
+      penRes -= add;
+      net += add;
+    });
+    lakeM += net;
+    if (penRes > 0.25) growQ.push({ x: x, y: y, m: penRes });
+    penRes = 0;
+    lakeDirty = true;
+    lakeIdle = false;
+    lakeQuiet = 0;
+  }
+
+  /* ---------- Simulation ---------- */
+  function step(f) {
+    tick++;
+    var ease = 1 - Math.pow(0.94, f);
+    grav.x += (gT.x - grav.x) * ease;
+    grav.y += (gT.y - grav.y) * ease;
+    grav.m += (gT.m - grav.m) * ease;
+    var gl = Math.hypot(grav.x, grav.y) || 1;
+    var gx = grav.x / gl, gy = grav.y / gl, gm = grav.m;
+    var rs = rSlide();
+
+    /* Kondensation entsteht nur dort, wo Nebel (Keime) vorhanden ist: auf frischen Spuren und freigewischtem Glas sofort verdunstet,
+       auf unberührtem, trockenem Glas am häufigsten */
+    if (Math.random() < EMIT_K * 0.6 * f) emitDrop(rnd(0.8, 1.8), 1);
+    if (Math.random() < EMIT_K * 0.035 * f) emitDrop(rnd(2.2, 3.9), 1);
+    if (Math.random() < EMIT_K * 0.003 * f) emitDrop(rnd(3.8, 5.8), 0.6);
+    if (drops.length > CAP) {
+      /* Winzige Tröpfchen verdunsten, damit immer Platz für neue entsteht */
+      for (var cu = 0; cu < 12; cu++) {
+        var cd = drops[Math.floor(Math.random() * drops.length)];
+        if (cd && cd.r < 1.8 && !cd.slide && !cd.into && !cd.held) { cd.dead = true; break; }
+      }
+    }
+
+    /* Raster der stehenden Tropfen: rutschende Tropfen werden von ihnen angezogen */
+    var PC = 40, pcols = Math.ceil(W / PC) + 2, prows = Math.ceil(H / PC) + 2;
+    var pgrid = new Array(pcols * prows);
+    for (var pi = 0; pi < drops.length; pi++) {
+      var pd = drops[pi];
+      if (pd.dead || pd.slide || pd.into || pd.r < 1 || pd.ghost > 0) continue;
+      var pk = Math.max(0, Math.min(prows - 1, Math.floor(pd.y / PC) + 1)) * pcols + Math.max(0, Math.min(pcols - 1, Math.floor(pd.x / PC) + 1));
+      if (pgrid[pk]) pgrid[pk].push(pd); else pgrid[pk] = [pd];
+    }
+
+    mergeHeld();
+    var n = drops.length, i, d;
+    for (i = 0; i < n; i++) {
+      d = drops[i];
+      if (d.dead) continue;
+
+      if (d.ghost > 0) {
+        d.ghost -= f;
+        if (d.ghost <= 0) d.dead = true;
+        continue;
+      }
+      if (d.nm > 0) d.nm -= f;
+      if (d.held) {
+        if (grav.m >= FLAT_OFF && d.r >= LAKE_R0 && fingerOn) {
+          /* Auf senkrechtem Glas läuft ein Tropfen ab der kleinsten Seegröße von selbst los, auch wenn der Finger noch schiebt */
+          var ru = gravUnit();
+          if (d === pullHead) { pulling = false; pullHead = null; }
+          d.ch = null;
+          d.anc = null;
+          d.held = false;
+          d.slide = true;
+          d.phase = 1;
+          d.timer = 12;
+          d.hx = ru.x;
+          d.hy = ru.y;
+          d.zig = 0;
+          d.age = 60;
+          d.nm = 15;
+          d.vx = ru.x * 1.5;
+          d.vy = ru.y * 1.5;
+          continue;
+        }
+        if (!fingerOn) {
+          d.held = false;
+          d.ch = null;
+          d.anc = null;
+        } else {
+          /* Tropfen werden vor dem Finger bzw. unter ihm gesammelt und verschmelzen dort */
+          d.slide = false;
+          d.vx = d.vy = 0;
+          /* Der Kopf liegt unter dem Finger; der Schweif hängt an ihm wie Kreise an einem Faden */
+          var hk = Math.min(1, (0.35 / (1 + d.r * 0.05)) * f);
+          d.x += (fingerX - d.x) * hk;
+          d.y += (fingerY - d.y) * hk;
+          updChain(d, f);
+          continue;
+        }
+      }
+
+      var rcL = rcAt(d.x, d.y, rs);
+      if (d.slide) {
+        d.age += f;
+        var sz = Math.max(0, Math.min(1, (d.r - 6.5) / 9));
+        /* Vorausschauen: liegt eine fremde feuchte Bahn unter oder vor dem Tropfen? */
+        var us = Math.hypot(d.vx, d.vy);
+        var ux = us > 0.05 ? d.vx / us : gx, uy = us > 0.05 ? d.vy / us : gy;
+        var qx = -uy, qy = ux, L = d.r + 4;
+        var wv = 0, tx = 0, ty = 0, side = 0, bi = -1, bw = 0, si;
+        var fw = [0, L, L, L], so = [0, 0, -0.6 * d.r, 0.6 * d.r];
+        for (si = 0; si < 4; si++) {
+          var wi = wetIdx(d.x + ux * fw[si] + qx * so[si], d.y + uy * fw[si] + qy * so[si]);
+          if (wi >= 0 && wet[wi] > bw && wid[wi] !== d.id) { bw = wet[wi]; bi = wi; side = so[si]; }
+        }
+        if (bi >= 0) {
+          tx = wdx[bi] / 127;
+          ty = wdy[bi] / 127;
+          var dn = tx * gx + ty * gy;
+          if (dn < 0) { tx = -tx; ty = -ty; dn = -dn; }
+          wv = (bw / 255) * Math.min(1, gm * 3) * Math.max(0, Math.min(1, (dn - 0.1) / 0.5));
+        }
+        var inTrack = wv > 0.25;
+        var wasTrack = d.wv > 0.25;
+        if (inTrack && !wasTrack) {
+          /* In die nasse Bahn gesogen: sofortiger Ruck nach vorn */
+          d.vx += tx * 0.2 * SPEED;
+          d.vy += ty * 0.2 * SPEED;
+        }
+        d.wv = wv;
+
+        /* Masse gegen Haftung: Gewicht wächst mit dem Volumen, die Haftung mit der Kontaktfläche.
+           Nasses Glas haftet kaum, Kalk und Rauheit haften stark. */
+        var net = 1 - 0.72 * rcL * (1 - 0.8 * wv) * d.thr / (d.r * d.r);   /* Gleitreibung ist kleiner als Haftreibung */
+        if (net > 0) {
+          var ax2 = gx * (1 - wv) + tx * wv, ay2 = gy * (1 - wv) + ty * wv;
+          var at = 0.12 * gm * net * (0.5 + d.r / 8) * SPEED * (1 + 0.25 * wv);
+          d.vx += ax2 * at * f;
+          d.vy += ay2 * at * f;
+          if (inTrack) {
+            var tsp = Math.max(Math.hypot(d.vx, d.vy), 0.3);
+            var sk = Math.min(1, 0.4 * wv * f);
+            d.vx += (tx * tsp - d.vx) * sk;
+            d.vy += (ty * tsp - d.vy) * sk;
+            if (side !== 0) {
+              var sg = side > 0 ? 1 : -1, ck = 0.1 * wv * tsp * f;
+              d.vx += qx * sg * ck;
+              d.vy += qy * sg * ck;
+            }
+          } else {
+            /* Seitwärts: der Rand weicht Haftstellen aus und wird von dichterem Nebel angezogen */
+            var o2 = d.r * 0.8;
+            var pP = pinAt(d.x + ux * L + qx * o2, d.y + uy * L + qy * o2);
+            var pM = pinAt(d.x + ux * L - qx * o2, d.y + uy * L - qy * o2);
+            var mP = micAt(d.x + ux * L + qx * o2, d.y + uy * L + qy * o2);
+            var mM = micAt(d.x + ux * L - qx * o2, d.y + uy * L - qy * o2);
+            var lat = ((pM - pP) * 0.9 + (mP - mM) * 0.5) * 0.08 * gm * f;
+            d.vx += qx * lat;
+            d.vy += qy * lat;
+          }
+          var fr = Math.pow(0.92 + 0.008 * wv + 0.03 * sz, f);
+          d.vx *= fr;
+          d.vy *= fr;
+        } else {
+          /* Haftung gewinnt: der Tropfen bleibt hängen */
+          var frs = Math.pow(0.72, f);
+          d.vx *= frs;
+          d.vy *= frs;
+        }
+        {
+          /* Stehende Tropfen lenken den Läufer stark ab: je größer und näher, desto stärker der Zug */
+          var pcx = Math.max(0, Math.min(pcols - 1, Math.floor(d.x / PC) + 1)), pcy = Math.max(0, Math.min(prows - 1, Math.floor(d.y / PC) + 1));
+          var pax = 0, pay = 0;
+          for (var pyy = pcy - 1; pyy <= pcy + 1; pyy++) {
+            if (pyy < 0 || pyy >= prows) continue;
+            for (var pxx = pcx - 1; pxx <= pcx + 1; pxx++) {
+              if (pxx < 0 || pxx >= pcols) continue;
+              var pcell = pgrid[pyy * pcols + pxx];
+              if (!pcell) continue;
+              for (var pq = 0; pq < pcell.length; pq++) {
+                var pe = pcell[pq];
+                if (pe === d || pe.dead || pe.into) continue;
+                var pdx = pe.x - d.x, pdy = pe.y - d.y, pdd = Math.hypot(pdx, pdy);
+                if (pdd < 0.01) continue;
+                var pgap = pdd - d.r - pe.r, pR = 14 + 3.6 * pe.r;
+                if (pgap > pR) continue;
+                var pprox = 1 - Math.max(0, pgap) / pR;
+                var pmw = (pe.r * pe.r) / (d.r * d.r + pe.r * pe.r);
+                var pa = ATTRACT * pmw * pprox * pprox;
+                pax += pdx / pdd * pa;
+                pay += pdy / pdd * pa;
+              }
+            }
+          }
+          var pk2 = (1 - 0.7 * wv) * f;
+          d.vx += pax * pk2;
+          d.vy += pay * pk2;
+        }
+        var sp = Math.hypot(d.vx, d.vy);
+        var vmax = (3 + 1.5 * d.wv + 3 * sz) * SPEED;
+        if (sp > vmax) { d.vx *= vmax / sp; d.vy *= vmax / sp; sp = vmax; }
+        if (sp > 0.0001) {
+          var tk = 1 + 9 * d.wv;   /* in einer nassen Spur gibt es praktisch keinen Widerstand: zehnfache Geschwindigkeit */
+          var nx = d.x + d.vx * f * tk, ny = d.y + d.vy * f * tk;
+          var dist = Math.hypot(nx - d.x, ny - d.y);
+          var tw = Math.max(2, d.r * 0.55);
+          wipeLine(d.x, d.y, nx, ny, tw);
+          markWet(d.x, d.y, nx, ny, tw, 255, d.id);
+          /* Nebel einsammeln (Zuwachs), nasse Spur hinterlassen (Verlust) */
+          var gainA = harvest(nx, ny, tw * 0.5, dist);
+          var lossA = (0.28 + 0.07 * Math.min(d.r, 14)) * dist * (1 - 0.8 * d.wv);   /* breiterer Tropfen = breiterer Schwanz = mehr Verlust */
+          d.r = Math.sqrt(Math.max(0.2, d.r * d.r + gainA - lossA));
+          d.shed += lossA;
+          /* Ein Läufer trägt höchstens so viel Wasser, wie die Haftung hergibt: Überschuss reißt als eigener Läufer ab (Volumen bleibt erhalten) */
+          var rcap = Math.max(RUNCAP, 1.35 * Math.sqrt(rcL));
+          if (d.r > rcap && sp > 0.05 && !d.held && drops.length < CAP + 300) {
+            var exA = d.r * d.r - rcap * rcap, prr = Math.sqrt(exA);
+            d.r = rcap;
+            var sgn = Math.random() < 0.5 ? -1 : 1, pxn = -d.vy / sp, pyn = d.vx / sp, offd = rcap + prr * 0.8 + 2;
+            var tn = addDrop(d.x + pxn * sgn * offd, d.y + pyn * sgn * offd, prr);
+            tn.slide = true;
+            tn.phase = 1;
+            tn.timer = 12;
+            tn.hx = d.vx / sp;
+            tn.hy = d.vy / sp;
+            tn.age = 60;
+            tn.nm = 25;
+            tn.vx = d.vx;
+            tn.vy = d.vy;
+          }
+          /* Abriss: die Spur zieht sich zu Perlen zusammen, Abstand etwa das Vierfache der Breite */
+          d.trail += dist;
+          if (d.trail > d.pearlGap) {
+            d.trail = 0;
+            d.pearlGap = tw * rnd(2.4, 4.6);
+            var pa = Math.min(d.shed, 14);
+            d.shed = Math.max(0, d.shed - pa);
+            if (pa > 0.9 && drops.length < CAP + 80) {
+              var pr = Math.max(0.8, Math.min(3.4, Math.sqrt(pa * 0.7)));
+              queueTrailDrop(
+                d.x - (d.vx / sp) * (d.r + pr + 1.5) + rnd(-1, 1) * 1.5,
+                d.y - (d.vy / sp) * (d.r + pr + 1.5) + rnd(-1, 1) * 1.5,
+                pr
+              );
+            }
+          }
+          d.x = nx;
+          d.y = ny;
+        }
+        if (net <= 0 && sp < 0.12) {
+          d.slide = false;
+          d.vx = d.vy = 0;
+        }
+        if (d.r < 1.0 || d.y > H + d.r + 4 || d.y < -40 || d.x < -40 || d.x > W + 40) d.dead = true;
+      } else {
+        var wi2 = d.r > 3.2 && gm > 0.1 ? wetIdx(d.x, d.y) : -1;
+        var ttx = 0, tty = 0, tok = false;
+        if (wi2 >= 0 && wet[wi2] > 127 && wid[wi2] !== d.id) {
+          ttx = wdx[wi2] / 127;
+          tty = wdy[wi2] / 127;
+          if (ttx * gx + tty * gy < 0) { ttx = -ttx; tty = -tty; }
+          tok = ttx * gx + tty * gy > 0.3;
+        }
+        if (tok && !d.into) {
+          /* Tropfen sitzt in einer feuchten Bahn: wird als Wasser der Bahn mitgerissen */
+          d.slide = true;
+          d.vx = ttx * 1.2;
+          d.vy = tty * 1.2;
+          d.age = 60;
+        } else if (!d.into && gm > 0.05 && d.r * d.r > rcL * d.thr) {
+          d.slide = true;
+          d.vx = gx * 0.7 * SPEED;   /* Losreißen: kurzer Ruck */
+          d.vy = gy * 0.7 * SPEED;
+          d.age = 0;
+        } else if (d.r > 1.6 && d.r < Math.sqrt(rcL) * 1.1) {
+          d.r += 0.009 * f;
+        }
+      }
+    }
+
+    processPearls();
+    flowMerges(f);
+    lakeFrame(f);
+
+    /* Verschmelzen über ein grobes Raster */
+    var MCS = 40;
+    var cols = Math.ceil(W / MCS) + 2;
+    var rows = Math.ceil(H / MCS) + 2;
+    var grid = new Array(cols * rows);
+    var m = drops.length, k, cx, cy;
+    for (i = 0; i < m; i++) {
+      d = drops[i];
+      if (d.dead) continue;
+      cx = Math.max(0, Math.min(cols - 1, Math.floor(d.x / MCS) + 1));
+      cy = Math.max(0, Math.min(rows - 1, Math.floor(d.y / MCS) + 1));
+      k = cy * cols + cx;
+      if (grid[k]) grid[k].push(i); else grid[k] = [i];
+    }
+    for (i = 0; i < m; i++) {
+      d = drops[i];
+      if (d.dead) continue;
+      cx = Math.max(0, Math.min(cols - 1, Math.floor(d.x / MCS) + 1));
+      cy = Math.max(0, Math.min(rows - 1, Math.floor(d.y / MCS) + 1));
+      for (var yy = cy - 1; yy <= cy + 1; yy++) {
+        if (yy < 0 || yy >= rows) continue;
+        for (var xx = cx - 1; xx <= cx + 1; xx++) {
+          if (xx < 0 || xx >= cols) continue;
+          var cell = grid[yy * cols + xx];
+          if (!cell) continue;
+          for (var q = 0; q < cell.length; q++) {
+            var j = cell[q];
+            if (j <= i) continue;
+            var e = drops[j];
+            if (e.dead || d.dead) continue;
+            var reach = (d.r + e.r) * 1.05 + 1.2 + 0.5 * (Math.abs(d.vx) + Math.abs(d.vy) + Math.abs(e.vx) + Math.abs(e.vy));
+            if (Math.hypot(d.x - e.x, d.y - e.y) < reach) startMerge(d, e);
+          }
+        }
+      }
+    }
+
+    /* Große Wasserflächen finden sich auch über das grobe Raster hinaus */
+    var bigs = [];
+    for (i = 0; i < drops.length; i++) {
+      if (!drops[i].dead && !drops[i].into && drops[i].r >= 14) bigs.push(drops[i]);
+    }
+    for (i = 0; i < bigs.length; i++) {
+      for (var j2 = i + 1; j2 < bigs.length; j2++) {
+        var p = bigs[i], q2 = bigs[j2];
+        if (p.into || q2.into) continue;
+        if (Math.hypot(p.x - q2.x, p.y - q2.y) < (p.r + q2.r) * 0.9) startMerge(p, q2);
+      }
+    }
+
+    var alive = [];
+    for (i = 0; i < drops.length; i++) if (!drops[i].dead) alive.push(drops[i]);
+    drops = alive;
+
+    if (tick % 36 === 0) { fillFog(0.08); decayWet(); regrowMic(); lakeRefog = true; }
+  }
+
+  /* ---------- Zeichnen ---------- */
+  var rimCols = ['rgba(70,225,210,0.6)', 'rgba(120,235,150,0.55)', 'rgba(60,140,235,0.55)', 'rgba(235,250,235,0.5)', 'rgba(70,225,210,0.6)'];
+
+  /* Maske der Wasserflächen aus dem Feld: zweimal weichgezeichnet, Rand bei Wert 0.5, bilinear hochgerechnet */
+  function hBlur(src, dst, y0, y1) {
+    for (var y = y0; y <= y1; y++) {
+      var row = y * gw;
+      for (var x = 1; x < gw - 1; x++) {
+        var i = row + x;
+        dst[i] = (src[i - 1] + 2 * src[i] + src[i + 1]) * 0.25;
+      }
+    }
+  }
+
+  function vBlur(src, dst, y0, y1) {
+    for (var y = Math.max(1, y0); y <= Math.min(gh - 2, y1); y++) {
+      var row = y * gw;
+      for (var x = 1; x < gw - 1; x++) {
+        var i = row + x;
+        dst[i] = (src[i - gw] + 2 * src[i] + src[i + gw]) * 0.25;
+      }
+    }
+  }
+
+  function renderMask() {
+    lakeDirty = false;
+    var mw = pmS.width, mh = pmS.height, data = pmImg.data;
+    var inv = RS / CS, px, py, i, y, x;
+    var ymin = gh, ymax = -1, xmin = gw, xmax = -1;
+    for (y = 0; y < gh; y++) {
+      var rb = y * gw;
+      for (x = 0; x < gw; x++) {
+        if (phi[rb + x] > 0.01) {
+          if (y < ymin) ymin = y;
+          if (y > ymax) ymax = y;
+          if (x < xmin) xmin = x;
+          var x2 = gw - 1;
+          while (x2 > x && phi[rb + x2] <= 0.01) x2--;
+          if (x2 > xmax) xmax = x2;
+          break;
+        }
+      }
+    }
+    if (ymax < 0) {
+      lakeBox.x0 = lakeBox.y0 = lakeBox.x1 = lakeBox.y1 = 0;
+      for (i = 3; i < data.length; i += 4) data[i] = 0;
+    } else {
+      lakeBox.x0 = Math.max(0, Math.floor((xmin - 5) * CS));
+      lakeBox.y0 = Math.max(0, Math.floor((ymin - 5) * CS));
+      lakeBox.x1 = Math.min(W, Math.ceil((xmax + 6) * CS));
+      lakeBox.y1 = Math.min(H, Math.ceil((ymax + 6) * CS));
+      var y0 = Math.max(1, ymin - 4), y1 = Math.min(gh - 2, ymax + 4);
+      rbuf.fill(0);
+      rtmp.fill(0);
+      hBlur(phi, rtmp, y0, y1);
+      vBlur(rtmp, rbuf, y0, y1);
+      hBlur(rbuf, rtmp, y0, y1);
+      vBlur(rtmp, rbuf, y0, y1);
+      var lo = Math.max(0, ymin - 4), hi = Math.min(gh - 2, ymax + 4);
+      for (py = 0; py < mh; py++) {
+        var fy = (py + 0.5) * inv - 0.5;
+        var iy = Math.floor(fy), ay = fy - iy;
+        if (iy < 0) { iy = 0; ay = 0; }
+        if (iy > gh - 2) { iy = gh - 2; ay = 1; }
+        var o = py * mw * 4 + 3;
+        if (iy + 1 < lo || iy > hi) {
+          for (px = 0; px < mw; px++) data[o + px * 4] = 0;
+          continue;
+        }
+        var r0 = iy * gw, r1 = r0 + gw;
+        for (px = 0; px < mw; px++) {
+          var fx = (px + 0.5) * inv - 0.5;
+          var ix = Math.floor(fx), ax = fx - ix;
+          if (ix < 0) { ix = 0; ax = 0; }
+          if (ix > gw - 2) { ix = gw - 2; ax = 1; }
+          var v = (rbuf[r0 + ix] * (1 - ax) + rbuf[r0 + ix + 1] * ax) * (1 - ay) + (rbuf[r1 + ix] * (1 - ax) + rbuf[r1 + ix + 1] * ax) * ay;
+          var a = 0.5 + (v * RLIFT - MASK_C) * 3.2;
+          data[o + px * 4] = a <= 0 ? 0 : (a >= 1 ? 255 : (a * 255) | 0);
+        }
+      }
+    }
+    pmSc.putImageData(pmImg, 0, 0);
+    pmc.setTransform(1, 0, 0, 1, 0, 0);
+    pmc.globalCompositeOperation = 'source-over';
+    pmc.globalAlpha = 1;
+    pmc.clearRect(0, 0, W, H);
+    pmc.imageSmoothingEnabled = true;
+    try { pmc.imageSmoothingQuality = 'high'; } catch (err) { /* ignorieren */ }
+    pmc.drawImage(pmS, 0, 0, W, H);
+    /* Beschlag nur dort räumen, wo das Wasser wirklich dick liegt: so bleiben keine blockigen Ränder zurück */
+    var fd = pmFImg.data;
+    for (i = 3; i < data.length; i += 4) fd[i] = data[i] >= 235 ? 255 : 0;
+    pmFc.putImageData(pmFImg, 0, 0);
+    pfc.setTransform(1, 0, 0, 1, 0, 0);
+    pfc.clearRect(0, 0, W, H);
+    pfc.imageSmoothingEnabled = true;
+    pfc.drawImage(pmF, 0, 0, W, H);
+  }
+
+  function crescent(dx, dy, color) {
+    var b = lakeBox, bx = b.x0, by = b.y0, bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+    plc.globalCompositeOperation = 'source-over';
+    plc.clearRect(bx - 8, by - 8, bw + 16, bh + 16);
+    plc.drawImage(pm, bx, by, bw, bh, bx, by, bw, bh);
+    plc.globalCompositeOperation = 'destination-out';
+    plc.drawImage(pm, bx, by, bw, bh, bx + dx, by + dy, bw, bh);
+    plc.globalCompositeOperation = 'source-in';
+    plc.fillStyle = color;
+    plc.fillRect(bx, by, bw, bh);
+    plc.globalCompositeOperation = 'source-over';
+    llc.drawImage(pl, bx, by, bw, bh, bx, by, bw, bh);
+  }
+
+  /* Pfütze: Fläche ist eben und leuchtet, nur der Rand ist gewölbt und schimmert farbig.
+     Die fertige Ebene wird zwischengespeichert und nur bei Änderung (oder alle paar Bilder für das Schimmern) neu gebaut. */
+  function buildLakeLayer(t) {
+    var b = lakeBox, bx = b.x0, by = b.y0, bw = b.x1 - b.x0, bh = b.y1 - b.y0;
+    if (bw <= 0 || bh <= 0) return;
+    llc.setTransform(1, 0, 0, 1, 0, 0);
+    llc.globalAlpha = 1;
+    llc.globalCompositeOperation = 'source-over';
+    llc.clearRect(bx - 8, by - 8, bw + 16, bh + 16);
+    plc.setTransform(1, 0, 0, 1, 0, 0);
+    plc.globalAlpha = 1;
+
+    plc.globalCompositeOperation = 'source-over';
+    plc.clearRect(bx - 8, by - 8, bw + 16, bh + 16);
+    /* Fläche: klares Wasser. Man sieht den Hintergrund fast unverändert, nur minimal versetzt und vergrößert (Brechung),
+       etwas satter und leicht abgedunkelt. Die Fläche ist eben, daher keine Verzerrung im Inneren. */
+    plc.save();
+    plc.beginPath();
+    plc.rect(bx, by, bw, bh);
+    plc.clip();
+    plc.translate(W / 2 + 4, H / 2 + 6);
+    plc.scale(1.04, 1.04);
+    plc.drawImage(bg, -W / 2, -H / 2, W, H);
+    plc.restore();
+    plc.globalCompositeOperation = 'source-over';
+    plc.fillStyle = 'rgba(8,52,84,0.16)';
+    plc.fillRect(bx, by, bw, bh);
+    /* Verläufe wie bei Wasser auf Metall: oben links aufgehellt, unten rechts dunkler, dazu ein zweiter, flacher Verlauf */
+    var lg = plc.createLinearGradient(0, 0, W, H);
+    lg.addColorStop(0, 'rgba(255,255,255,0.16)');
+    lg.addColorStop(0.45, 'rgba(255,255,255,0)');
+    lg.addColorStop(1, 'rgba(0,22,48,0.2)');
+    plc.fillStyle = lg;
+    plc.fillRect(bx, by, bw, bh);
+    var lg2 = plc.createLinearGradient(W, 0, 0, H * 0.6);
+    lg2.addColorStop(0, 'rgba(120,230,220,0.1)');
+    lg2.addColorStop(0.5, 'rgba(120,230,220,0)');
+    lg2.addColorStop(1, 'rgba(40,90,200,0.1)');
+    plc.fillStyle = lg2;
+    plc.fillRect(bx, by, bw, bh);
+    /* Spiegelung eines Fensters: breites, weiches Lichtband, das langsam über das Wasser wandert */
+    var sx = ((t * 16) % (W * 1.7)) - W * 0.4;
+    var sg = plc.createLinearGradient(sx, 0, sx + W * 0.4, H * 0.4);
+    sg.addColorStop(0, 'rgba(255,255,255,0)');
+    sg.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+    sg.addColorStop(1, 'rgba(255,255,255,0)');
+    plc.fillStyle = sg;
+    plc.fillRect(bx, by, bw, bh);
+    plc.globalCompositeOperation = 'destination-in';
+    plc.drawImage(pm, bx, by, bw, bh, bx, by, bw, bh);
+    plc.globalCompositeOperation = 'source-over';
+    llc.drawImage(pl, bx, by, bw, bh, bx, by, bw, bh);
+
+    plc.clearRect(bx - 8, by - 8, bw + 16, bh + 16);
+    plc.drawImage(pm, bx, by, bw, bh, bx, by, bw, bh);
+    plc.globalCompositeOperation = 'destination-out';
+    var E = 7;
+    for (var k = 0; k < 8; k++) {
+      var an = k * Math.PI / 4;
+      plc.drawImage(pm, bx, by, bw, bh, bx + Math.cos(an) * E, by + Math.sin(an) * E, bw, bh);
+    }
+    plc.globalCompositeOperation = 'source-in';
+    /* Randband: gewölbte Kante zeigt den Hintergrund verkehrt herum und gestaucht, wie bei den Tropfen */
+    plc.save();
+    plc.translate(W / 2, H / 2);
+    plc.rotate(Math.PI);
+    plc.scale(0.7, 0.7);
+    plc.drawImage(bg, -W / 2, -H / 2, W, H);
+    plc.restore();
+    var gx = Math.sin(t * 0.15) * W * 0.4 - W * 0.1;
+    var rg = plc.createLinearGradient(gx, 0, gx + W * 1.2, H);
+    for (var s2 = 0; s2 < rimCols.length; s2++) rg.addColorStop(s2 / (rimCols.length - 1), rimCols[s2]);
+    plc.fillStyle = rg;
+    plc.fillRect(bx, by, bw, bh);
+    plc.globalCompositeOperation = 'source-over';
+    llc.globalAlpha = 0.6;
+    llc.drawImage(pl, bx, by, bw, bh, bx, by, bw, bh);
+    llc.globalAlpha = 1;
+
+    /* Kanten wie bei echtem Wasser: dunkle Außenlinie unten rechts, helle Spiegelung oben links,
+       innen gegenüber eine schmale Lichtbündelung */
+    /* weiche Innenverläufe an den Rändern: viele schmale Streifen mit kleiner Deckkraft ergeben einen Verlauf */
+    for (var gk = 1; gk <= 4; gk++) crescent(-gk * 2.8, -gk * 2.8, 'rgba(0,18,40,0.07)');
+    for (gk = 1; gk <= 3; gk++) crescent(gk * 2.6, gk * 2.6, 'rgba(255,255,255,0.06)');
+    crescent(-4, -4, 'rgba(0,10,24,0.45)');
+    crescent(3, 3, 'rgba(255,255,255,0.7)');
+    crescent(-2, -2, 'rgba(190,255,240,0.35)');
+    crescent(1, 1, 'rgba(255,255,255,0.55)');
+  }
+
+  function draw() {
+    if (glOK) { drawGL(); return; }
+    var i, d, t = tick / 60;
+    var big = [];
+    if (tick % 2 === 0) paintBg(t);
+    if (lakeM > 0.5 || lakeDirty) {
+      var rendered = false;
+      if (lakeDirty) { renderMask(); rendered = true; layerStale = true; }
+      var cb = lakeBox;
+      if ((rendered || lakeRefog) && cb.x1 > cb.x0) {
+        /* Wasser räumt den Beschlag unter sich weg */
+        fctx.globalCompositeOperation = 'destination-out';
+        fctx.drawImage(pf, cb.x0, cb.y0, cb.x1 - cb.x0, cb.y1 - cb.y0, cb.x0, cb.y0, cb.x1 - cb.x0, cb.y1 - cb.y0);
+        fctx.globalCompositeOperation = 'source-over';
+      }
+      lakeRefog = false;
+    }
+
+    ctx.globalAlpha = 1;
+    ctx.drawImage(bg, 0, 0, W, H);
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(fog, 0, 0, W, H);
+    ctx.globalAlpha = 1;
+    if (lakeM > 0.5) {
+      if (layerStale || tick % 12 === 0) { buildLakeLayer(t); layerStale = false; }
+      var lb = lakeBox;
+      if (lb.x1 > lb.x0) ctx.drawImage(ll, lb.x0, lb.y0, lb.x1 - lb.x0, lb.y1 - lb.y0, lb.x0, lb.y0, lb.x1 - lb.x0, lb.y1 - lb.y0);
+    }
+
+    /* kleine Tröpfchen gesammelt zeichnen */
+    ctx.fillStyle = 'rgba(0,0,0,0.2)';
+    ctx.beginPath();
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i];
+      if (d.r < 2.4) { ctx.moveTo(d.x + d.r, d.y + d.r * 0.4); ctx.arc(d.x, d.y + d.r * 0.4, d.r, 0, TAU); } else big.push(d);
+    }
+    ctx.fill();
+    ctx.fillStyle = 'rgba(226,239,251,0.34)';
+    ctx.beginPath();
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i];
+      if (d.r < 2.4) { ctx.moveTo(d.x + d.r, d.y); ctx.arc(d.x, d.y, d.r, 0, TAU); }
+    }
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i];
+      if (d.r < 2.4 && d.r > 1.1) {
+        var hr = d.r * 0.32;
+        ctx.moveTo(d.x - d.r * 0.3 + hr, d.y - d.r * 0.3);
+        ctx.arc(d.x - d.r * 0.3, d.y - d.r * 0.3, hr, 0, TAU);
+      }
+    }
+    ctx.fill();
+
+    /* Tropfen: gespiegelter, verkleinerter Hintergrund als Brechung, bunte Reflexe */
+    for (i = 0; i < big.length; i++) {
+      d = big[i];
+      var sa = d.ghost > 0 ? Math.min(1, d.ghost / 10) : 1;
+      var x = d.x, y = d.y, r = d.r;
+      ctx.globalAlpha = sa;
+
+      /* Form: laufende und große Tropfen werden entlang der Bewegung bzw. senkrecht oval */
+      var vs = Math.hypot(d.vx, d.vy);
+      var el = 1 + Math.min(0.55, (d.slide ? vs * 0.1 : 0) + Math.max(0, r - 8) * 0.025);
+      var ea = vs > 0.15 ? Math.atan2(d.vy, d.vx) - Math.PI / 2 : (Math.atan2(grav.y, grav.x) - Math.PI / 2);
+      var ex = 1 / Math.sqrt(el), ey = Math.sqrt(el);
+
+      ctx.fillStyle = 'rgba(0,0,0,0.22)';
+      ctx.save();
+      ctx.translate(x + r * 0.06, y + r * 0.22);
+      ctx.rotate(ea);
+      ctx.scale(ex, ey);
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 1.03, 0, TAU);
+      ctx.restore();
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ea);
+      ctx.scale(ex, ey);
+      ctx.arc(0, 0, r, 0, TAU);
+      ctx.restore();
+      ctx.save();
+      ctx.clip();
+      ctx.translate(x, y);
+      ctx.rotate(Math.PI);
+      ctx.scale(0.6, 0.6);
+      ctx.drawImage(bg, -x, -y, W, H);
+      ctx.restore();
+
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(ea);
+      ctx.scale(ex, ey);
+      var g = ctx.createRadialGradient(-r * 0.25, -r * 0.3, r * 0.1, 0, 0, r);
+      g.addColorStop(0, 'rgba(255,255,255,0.12)');
+      g.addColorStop(0.7, 'rgba(0,0,0,0)');
+      g.addColorStop(1, 'rgba(0,0,0,0.34)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, TAU);
+      ctx.fill();
+
+      /* leichte Farbsäume wie bei einer Linse */
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(60,150,255,0.4)';
+      ctx.beginPath();
+      ctx.arc(-0.7, -0.3, r, 0, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(120,255,170,0.36)';
+      ctx.beginPath();
+      ctx.arc(0.7, 0.3, r, 0, TAU);
+      ctx.stroke();
+
+      /* farbige Lichtreflexe, je Tropfen eine andere Tönung */
+      ctx.fillStyle = 'hsla(' + d.hue.toFixed(0) + ',95%,72%,0.42)';
+      ctx.beginPath();
+      ctx.arc(r * 0.15, r * 0.52, r * 0.28, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = 'hsla(' + (d.hue > 190 ? d.hue - 50 : d.hue + 50).toFixed(0) + ',90%,68%,0.32)';
+      ctx.beginPath();
+      ctx.arc(r * 0.42, -r * 0.3, r * 0.14, 0, TAU);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(255,255,255,0.78)';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.32, -r * 0.38, r * 0.2, r * 0.12, -0.6, 0, TAU);
+      ctx.fill();
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  /* ---------- Berührung ---------- */
+  var ptr = null;
+  var fingerOn = false, fingerX = 0, fingerY = 0, fvx = 0, fvy = 0;
+
+  function gravUnit() {
+    var gl = Math.hypot(grav.x, grav.y) || 1;
+    return { x: grav.x / gl, y: grav.y / gl };
+  }
+
+
+  /* Gesammeltes Wasser macht die Fingerbewegung direkt mit */
+  function carryHeld(dx, dy) {
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+      if (d.held && !d.dead) {
+        if (d.r > 2.5) markWet(d.x, d.y, d.x + dx, d.y + dy, Math.min(14, d.r * 0.8), 255, d.id);
+        d.x += dx;
+        d.y += dy;
+      }
+    }
+  }
+
+  /* Mitgeführte Körper nehmen einander und frisch aufgenommene Tropfen vollständig auf (Flächen addieren sich) */
+  function mergeHeld() {
+    var best = null, i, d;
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i];
+      if (d.held && !d.dead && (!best || d.r > best.r)) best = d;
+    }
+    if (!best) return;
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i];
+      if (d === best || !d.held || d.dead) continue;
+      if (Math.hypot(d.x - best.x, d.y - best.y) < 26 + best.r * 0.5 + d.r) {
+        best.r = Math.sqrt(best.r * best.r + d.r * d.r);
+        d.dead = true;
+      }
+    }
+  }
+
+  /* Tropfen in Fingernähe bleiben am Finger haften, keiner geht verloren */
+  function grabDrops(x, y, px, py) {
+    if (px === undefined) { px = x; py = y; }
+    var sdx = x - px, sdy = y - py, sl2 = sdx * sdx + sdy * sdy;
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+      if (d.dead || d.held || d.into || d.ghost > 0 || d.r >= ARM0) continue;
+      var tt = sl2 > 0 ? Math.max(0, Math.min(1, ((d.x - px) * sdx + (d.y - py) * sdy) / sl2)) : 1;
+      var qx = px + sdx * tt, qy = py + sdy * tt, dq = Math.hypot(d.x - qx, d.y - qy);
+      if (pulling && lakeM > 0.5 && dq < FR + d.r) {
+        /* Tropfen, die der Finger beim Ziehen trifft, gehen mit ihrem Volumen in den Arm ein */
+        if (pullHead && !pullHead.dead) pullHead.r = Math.sqrt(pullHead.r * pullHead.r + d.r * d.r);
+        else { d.held = true; d.slide = false; d.vx = d.vy = 0; continue; }
+        d.dead = true;
+        continue;
+      }
+      if (dq < FR + d.r) {
+        d.held = true;
+        d.slide = false;
+        d.vx = d.vy = 0;
+      }
+    }
+  }
+
+  function releaseHeld() {
+    pulling = false;
+    pullHead = null;
+    pullFree = false;
+    needExit = false;
+    var u = gravUnit();
+    for (var i = 0; i < drops.length; i++) {
+      var d = drops[i];
+      if (!d.held) continue;
+      d.held = false;
+      if (!lakeMode || !(d.anc || (d.r >= 12 && d.r >= LAKE_R0))) { d.ch = null; d.anc = null; }
+      if (lakeMode && (d.anc || (d.r >= 12 && d.r >= LAKE_R0))) {
+        paintBodyToLake(d);
+        d.dead = true;
+        continue;
+      }
+      if (d.r > 3) {
+        d.slide = true;
+        d.phase = 1;
+        d.timer = 12;
+        d.hx = u.x;
+        d.hy = u.y;
+        d.zig = 0;
+        d.age = 60;
+        d.vx = Math.max(-5, Math.min(5, fvx * 0.6));
+        d.vy = Math.max(-5, Math.min(5, fvy * 0.6));
+      }
+    }
+    fingerOn = false;
+    fvx = fvy = 0;
+  }
+
+  function paintBodyToLake(d) {
+    var budget = Math.PI * d.r * d.r / (CS * CS), got = 0;
+    chainEach(d, function (x, y, r) { if (got < budget) got += lakeDisc(x, y, r, true, false); });
+    var rem = budget - got;
+    if (rem > 0.25) growQ.push({ x: d.x, y: d.y, m: rem });
+    d.ch = null;
+    d.anc = null;
+  }
+
+  function tap(x, y) {
+    var best = null, bd = 1e9, i, d, dist;
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i];
+      if (d.dead || d.r < 2 || (d.r >= ARM0 && grav.m < FLAT_OFF)) continue;
+      dist = Math.hypot(d.x - x, d.y - y);
+      if (dist < d.r + 30 && dist < bd) { bd = dist; best = d; }
+    }
+    if (!best) { wipeDot(x, y, 14); return; }
+    var u = gravUnit();
+    best.slide = true;
+    best.age = 60;
+    best.phase = 1;
+    best.timer = 22;
+    best.hx = u.x;
+    best.hy = u.y;
+    if (grav.m > 0.2) {
+      best.vx += u.x * 3.2;
+      best.vy += u.y * 3.2;
+    } else {
+      var ax = best.x - x, ay = best.y - y;
+      var l = Math.hypot(ax, ay) || 1;
+      best.vx += (ax / l) * 3;
+      best.vy += (ay / l) * 3;
+      best.hx = ax / l;
+      best.hy = ay / l;
+    }
+  }
+
+  cv.addEventListener('pointerdown', function (e) {
+    e.preventDefault();
+    try { cv.setPointerCapture(e.pointerId); } catch (err) { /* ignorieren */ }
+    ptr = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now(), moved: false };
+    armGid++;
+    armQ = [];
+    armQh = 0;
+    pulling = false;
+    pullHead = null;
+  });
+  cv.addEventListener('pointermove', function (e) {
+    if (!ptr) return;
+    var x = e.clientX, y = e.clientY;
+    if (Math.hypot(x - ptr.sx, y - ptr.sy) > 9) ptr.moved = true;
+    if (ptr.moved) {
+      wipeLine(ptr.x, ptr.y, x, y, 34);
+      markWet(ptr.x, ptr.y, x, y, 34, 0, 0);
+      fvx = fvx * 0.6 + (x - ptr.x) * 0.4;
+      fvy = fvy * 0.6 + (y - ptr.y) * 0.4;
+      fingerOn = true;
+      fingerX = x;
+      fingerY = y;
+      if (lakeMode && !draining) {
+        penMove(ptr.x, ptr.y, x, y);
+        penDrops(x, y, ptr.x, ptr.y);
+      } else {
+        if (penRes > 0) penRelease(ptr.x, ptr.y);
+        carryHeld(x - ptr.x, y - ptr.y);
+        grabDrops(x, y, ptr.x, ptr.y);
+      }
+    }
+    ptr.x = x;
+    ptr.y = y;
+  });
+  /* Doppeltipp blendet die Bedienleiste ein oder aus */
+  var lastTap = { t: -1e9, x: 0, y: 0 };
+  function release(e) {
+    if (ptr && !ptr.moved && performance.now() - ptr.t < 500) {
+      var now = performance.now();
+      if (now - lastTap.t < 320 && Math.hypot(ptr.sx - lastTap.x, ptr.sy - lastTap.y) < 40) {
+        var barEl = document.getElementById('bar');
+        if (barEl) barEl.hidden = !barEl.hidden;
+        lastTap.t = -1e9;
+      } else {
+        lastTap = { t: now, x: ptr.sx, y: ptr.sy };
+        tap(ptr.sx, ptr.sy);
+      }
+    }
+    if (ptr) penRelease(ptr.x, ptr.y);
+    releaseHeld();
+    ptr = null;
+  }
+  cv.addEventListener('pointerup', release);
+  cv.addEventListener('pointercancel', function () { if (ptr) penRelease(ptr.x, ptr.y); releaseHeld(); ptr = null; });
+
+  /* ---------- Lage des Glases ---------- */
+  var buttons = Array.prototype.slice.call(document.querySelectorAll('.modes button'));
+  var noteTimer = 0;
+  var sensorSeen = false;
+  var sensorBound = false;
+
+  function say(text) {
+    if (!noteEl) return;
+    noteEl.textContent = text;
+    clearTimeout(noteTimer);
+    if (text) noteTimer = setTimeout(function () { noteEl.textContent = ''; }, 5000);
+  }
+
+  function setMode(m) {
+    mode = m;
+    if (typeof syncTilt === 'function') syncTilt(m);
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-mode') === m ? 'true' : 'false'); });
+    if (m === 'up') { gT.x = 0; gT.y = 1; gT.m = 1; }
+    else if (m === 'left') { gT.x = -0.6; gT.y = 0.8; gT.m = 1; }
+    else if (m === 'right') { gT.x = 0.6; gT.y = 0.8; gT.m = 1; }
+    else if (m === 'flat') { gT.x = 0; gT.y = 1; gT.m = 0.03; }
+  }
+
+  function onOri(e) {
+    if (e.beta == null) return;
+    sensorSeen = true;
+    if (mode !== 'sensor') return;
+    var b = Math.max(-90, Math.min(90, e.beta)) * Math.PI / 180;
+    var g = Math.max(-90, Math.min(90, e.gamma || 0)) * Math.PI / 180;
+    var gy = Math.sin(b), gx = Math.sin(g);
+    gT.m = Math.min(1, Math.hypot(gx, gy));
+    if (gT.m < 0.05) { gT.x = 0; gT.y = 1; } else { gT.x = gx; gT.y = gy; }
+  }
+
+  function sensorFailed() {
+    say('Der Lagesensor ist hier nicht verfügbar. Die Lage lässt sich mit den Tasten einstellen.');
+    setMode('up');
+  }
+
+  function startSensor() {
+    mode = 'sensor';
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-mode') === 'sensor' ? 'true' : 'false'); });
+    sensorSeen = false;
+    var ask = Promise.resolve('granted');
+    try {
+      if (window.DeviceOrientationEvent && typeof window.DeviceOrientationEvent.requestPermission === 'function') {
+        ask = window.DeviceOrientationEvent.requestPermission();
+      }
+    } catch (err) { ask = Promise.reject(err); }
+    ask.then(function (res) {
+      if (res !== 'granted') { sensorFailed(); return; }
+      if (!sensorBound) { window.addEventListener('deviceorientation', onOri); sensorBound = true; }
+      setTimeout(function () { if (!sensorSeen && mode === 'sensor') sensorFailed(); }, 1500);
+    }).catch(sensorFailed);
+  }
+
+  var tiltEl = document.getElementById('tilt'), tiltV = document.getElementById('tiltv');
+  function applyTilt() {
+    if (!tiltEl) return;
+    var a = parseFloat(tiltEl.value), r = a * Math.PI / 180;
+    if (tiltV) tiltV.textContent = a.toFixed(1).replace('.0', '') + '°';
+    mode = 'slider';
+    buttons.forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
+    gT.x = 0; gT.y = 1; gT.m = Math.max(0.03, Math.sin(r));
+  }
+  if (tiltEl) tiltEl.addEventListener('input', applyTilt);
+  function syncTilt(m) {
+    if (!tiltEl) return;
+    var v = m === 'up' || m === 'left' || m === 'right' ? 90 : 0;
+    if (m === 'flat' || v === 90) {
+      tiltEl.value = v;
+      if (tiltV) tiltV.textContent = v + '°';
+    }
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var m = b.getAttribute('data-mode');
+      if (m === 'sensor') startSensor(); else setMode(m);
+    });
+  });
+
+  /* ---------- Start ---------- */
+
+  /* ---------- WebGL-Darstellung ----------
+     Alles Wasser (Tropfen, Seen, nasse Spuren) wird zuerst als Karte aus Oberflächenneigung und Brechkraft gezeichnet.
+     Ein einziger Shader rechnet daraus Brechung des Hintergrunds, Fresnel-Reflexion, Glanzlicht, Randdunkelheit und Kaustik.
+     So unterscheidet sich ein See von einem Tropfen nur noch durch die Form seiner Oberfläche. */
+  var GL = {};
+  var VS_DROP = '#version 300 es\n' +
+    'precision highp float;\n' +
+    'in vec2 aCorner; in vec4 aA; in vec2 aB; in float aC;\n' +
+    'uniform vec2 uRes;\n' +
+    'out vec2 vLocal; out vec2 vAxes; out float vR; out float vAng; out float vAlpha; out float vFlat;\n' +
+    'void main(){\n' +
+    '  float r = aA.z, el = aA.w;\n' +
+    '  float ax = r / sqrt(el), ay = r * sqrt(el);\n' +
+    '  vec2 local = aCorner * vec2(ax + 2.0, ay + 2.0);\n' +
+    '  float c = cos(aB.x), s = sin(aB.x);\n' +
+    '  vec2 world = aA.xy + vec2(c*local.x - s*local.y, s*local.x + c*local.y);\n' +
+    '  gl_Position = vec4(world / uRes * 2.0 - 1.0, 0.0, 1.0);\n' +
+    '  vLocal = local; vAxes = vec2(ax, ay); vR = r; vAng = aB.x; vAlpha = aB.y; vFlat = aC;\n' +
+    '}\n';
+  var FS_DROP = '#version 300 es\n' +
+    'precision highp float;\n' +
+    'in vec2 vLocal; in vec2 vAxes; in float vR; in float vAng; in float vAlpha; in float vFlat;\n' +
+    'out vec4 o;\n' +
+    'void main(){\n' +
+    '  vec2 q = vLocal / vAxes;\n' +
+    '  float d = length(q);\n' +
+    '  float px = 1.0 / min(vAxes.x, vAxes.y);\n' +
+    '  float cov = 1.0 - smoothstep(1.0 - px, 1.0 + 0.5 * px, d);\n' +
+    '  if (cov <= 0.0) discard;\n' +
+    '  float sn = 0.88;\n' +                                   /* Randwinkel der Kappe */
+    '  vec2 nl = mix(q * sn, q / max(d, 0.001) * 0.95 * smoothstep(0.7, 1.0, d), vFlat);\n' +
+    '  float c = cos(vAng), s = sin(vAng);\n' +
+    '  vec2 n = vec2(c*nl.x - s*nl.y, s*nl.x + c*nl.y);\n' +
+    '  float reff = max(mix(1.6 * vR / sn, 14.0, vFlat), 10.0);\n' +
+    '  o = vec4(n * 0.5 + 0.5, clamp(reff / 64.0, 0.0, 1.0), cov * vAlpha);\n' +
+    '}\n';
+  var VS_FS = '#version 300 es\n' +
+    'precision highp float;\n' +
+    'in vec2 aCorner;\n' +
+    'out vec2 vUv;\n' +
+    'void main(){ gl_Position = vec4(aCorner, 0.0, 1.0); vUv = aCorner * 0.5 + 0.5; }\n';
+  var FS_FIELD = '#version 300 es\n' +
+    'precision highp float;\n' +
+    'in vec2 vUv;\n' +
+    'uniform sampler2D uLake; uniform sampler2D uWet;\n' +
+    'uniform vec2 uRes; uniform vec2 uLakeDim; uniform float uCS; uniform vec2 uWetDim; uniform float uWC; uniform float uLakeOn;\n' +
+    'out vec4 o;\n' +
+    'float lk(vec2 p){ return texture(uLake, p / (uLakeDim * uCS)).r * 1.2; }\n' +
+    'float wr(vec2 p){ return texture(uWet, p / (uWetDim * uWC)).r; }\n' +
+    'float wt(vec2 p){ float d = uWC * 0.9; float v = wr(p) * 0.28 + (wr(p + vec2(d, 0.)) + wr(p - vec2(d, 0.)) + wr(p + vec2(0., d)) + wr(p - vec2(0., d))) * 0.12 + (wr(p + vec2(d, d)) + wr(p - vec2(d, d)) + wr(p + vec2(d, -d)) + wr(p - vec2(d, -d))) * 0.06; return smoothstep(0.04, 0.95, v); }\n' +
+    'void main(){\n' +
+    '  vec2 p = vUv * uRes;\n' +
+    '  float cov2 = 0.0; vec2 n2 = vec2(0.0);\n' +
+    '  if (uLakeOn > 0.5) {\n' +
+    '    float v = lk(p);\n' +
+    '    cov2 = smoothstep(0.36, 0.64, v);\n' +
+    '    vec2 g2 = vec2(lk(p + vec2(uCS,0.)) - lk(p - vec2(uCS,0.)), lk(p + vec2(0.,uCS)) - lk(p - vec2(0.,uCS))) / (2.0 * uCS);\n' +
+    '    n2 = -g2 * 9.0;\n' +
+    '    float l2 = length(n2); if (l2 > 0.95) n2 *= 0.95 / l2;\n' +
+    '  }\n' +
+    '  float w = wt(p);\n' +
+    '  float cov1 = 0.42 * w;\n' +
+    '  vec2 g1 = vec2(wt(p + vec2(uWC,0.)) - wt(p - vec2(uWC,0.)), wt(p + vec2(0.,uWC)) - wt(p - vec2(0.,uWC))) / (2.0 * uWC);\n' +
+    '  vec2 n1 = -g1 * 2.0;\n' +
+    '  float l1 = length(n1); if (l1 > 0.25) n1 *= 0.25 / l1;\n' +
+    '  float a = cov2 + cov1 * (1.0 - cov2);\n' +
+    '  if (a < 0.003) { o = vec4(0.5, 0.5, 0.0, 0.0); return; }\n' +
+    '  vec2 n = (n2 * cov2 + n1 * cov1 * (1.0 - cov2)) / a;\n' +
+    '  float reff = (14.0 * cov2 + 5.0 * cov1 * (1.0 - cov2)) / a;\n' +
+    '  o = vec4(0.5 + 0.5 * n * a, reff * a / 64.0, a);\n' +
+    '}\n';
+  var FS_COMP = '#version 300 es\n' +
+    'precision highp float;\n' +
+    'in vec2 vUv;\n' +
+    'uniform sampler2D uBg; uniform sampler2D uFog; uniform sampler2D uWater;\n' +
+    'uniform vec2 uRes;\n' +
+    'out vec4 o;\n' +
+    'void main(){\n' +
+    '  vec2 uv = vec2(vUv.x, 1.0 - vUv.y);\n' +
+    '  vec2 p = uv * uRes;\n' +
+    '  vec4 w = texture(uWater, uv);\n' +
+    '  float cov = w.a;\n' +
+    '  vec4 fogS = texture(uFog, uv);\n' +
+    '  vec3 land = mix(texture(uBg, uv).rgb, fogS.rgb, fogS.a * 0.8);\n' +
+    
+    
+    '  if (cov < 0.004) { o = vec4(land, 1.0); return; }\n' +
+    '  vec2 n = (w.rg - 0.5) * 2.0 / cov;\n' +
+    '  float reff = w.b * 64.0 / cov;\n' +
+    '  float sl = min(length(n), 0.985);\n' +
+    '  vec3 n3 = vec3(n, sqrt(1.0 - sl * sl));\n' +
+    '  vec3 refr = texture(uBg, (p - n * reff) / uRes).rgb;\n' +
+    '  vec2 nd = n / max(sl, 0.001);\n' +
+    /* helle, ruhige Optik: Wasser fast im Ton des Glases, innen sanfte Verläufe, außen eine dunkle Kontur */
+    '  vec3 wc = mix(land, refr, 0.25) * 1.02;\n' +
+    '  wc *= 1.0 + 0.10 * n.y - 0.05 * n.x;\n' +
+    '  wc *= 1.0 - 0.10 * smoothstep(0.25, 0.75, sl) * max(-n.y, 0.0) / max(sl, 0.001);\n' +
+    '  wc *= 1.0 - 0.22 * smoothstep(0.55, 0.95, sl);\n' +
+    '  vec3 L = normalize(vec3(-0.45, -0.62, 0.65));\n' +
+    '  vec3 Hh = normalize(L + vec3(0.0, 0.0, 1.0));\n' +
+    '  wc += vec3(pow(max(dot(n3, Hh), 0.0), 160.0) * 0.25);\n' +
+    /* dünne Wasserfilme (Laufspuren): kaum heller als das Glas, nur angedeutete Kontur */
+    '  float thin = 1.0 - smoothstep(5.5, 9.0, reff);\n' +
+    '  vec3 tc = land * 1.04 * (1.0 - 0.06 * smoothstep(0.06, 0.22, sl));\n' +
+    '  wc = mix(wc, tc, thin);\n' +
+    '  float cv = mix(cov, min(1.0, cov * 1.8), thin);\n' +
+    '  vec3 col = mix(land, wc, cv);\n' +
+    /* dunkle Kontur genau an der Grenze der Wasserfläche, ringsum gleich; bei Laufspuren nur angedeutet */
+    '  float edgeC = clamp(4.0 * cov * (1.0 - cov), 0.0, 1.0);\n' +
+    '  col *= 1.0 - edgeC * mix(0.6, 0.03, thin);\n' +
+    '  o = vec4(col, 1.0);\n' +
+    '}\n';
+
+  function glCompile(type, src) {
+    var sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+    return sh;
+  }
+
+  function glProg(vs, fs) {
+    var pr = gl.createProgram();
+    gl.attachShader(pr, glCompile(gl.VERTEX_SHADER, vs));
+    gl.attachShader(pr, glCompile(gl.FRAGMENT_SHADER, fs));
+    gl.linkProgram(pr);
+    if (!gl.getProgramParameter(pr, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(pr));
+    return pr;
+  }
+
+  function glTex() {
+    var t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    return t;
+  }
+
+  function initGL() {
+    if (!glOK) return;
+    try {
+      GL.pDrop = glProg(VS_DROP, FS_DROP);
+      GL.pField = glProg(VS_FS, FS_FIELD);
+      GL.pComp = glProg(VS_FS, FS_COMP);
+      var quad = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+      GL.qbuf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, GL.qbuf);
+      gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+      GL.ibuf = gl.createBuffer();
+      GL.inst = new Float32Array((CAP + 600) * 7);
+      /* VAO für die Tropfen */
+      GL.vaoDrop = gl.createVertexArray();
+      gl.bindVertexArray(GL.vaoDrop);
+      gl.bindBuffer(gl.ARRAY_BUFFER, GL.qbuf);
+      var lc = gl.getAttribLocation(GL.pDrop, 'aCorner');
+      gl.enableVertexAttribArray(lc);
+      gl.vertexAttribPointer(lc, 2, gl.FLOAT, false, 0, 0);
+      gl.bindBuffer(gl.ARRAY_BUFFER, GL.ibuf);
+      var la = gl.getAttribLocation(GL.pDrop, 'aA'), lb = gl.getAttribLocation(GL.pDrop, 'aB');
+      gl.enableVertexAttribArray(la);
+      gl.vertexAttribPointer(la, 4, gl.FLOAT, false, 28, 0);
+      gl.vertexAttribDivisor(la, 1);
+      gl.enableVertexAttribArray(lb);
+      gl.vertexAttribPointer(lb, 2, gl.FLOAT, false, 28, 16);
+      gl.vertexAttribDivisor(lb, 1);
+      var lcF = gl.getAttribLocation(GL.pDrop, 'aC');
+      gl.enableVertexAttribArray(lcF);
+      gl.vertexAttribPointer(lcF, 1, gl.FLOAT, false, 28, 24);
+      gl.vertexAttribDivisor(lcF, 1);
+      /* VAO für Vollbild */
+      GL.vaoFs = gl.createVertexArray();
+      gl.bindVertexArray(GL.vaoFs);
+      gl.bindBuffer(gl.ARRAY_BUFFER, GL.qbuf);
+      var l0 = gl.getAttribLocation(GL.pField, 'aCorner');
+      gl.enableVertexAttribArray(l0);
+      gl.vertexAttribPointer(l0, 2, gl.FLOAT, false, 0, 0);
+      gl.bindVertexArray(null);
+      GL.tBg = glTex();
+      GL.tFog = glTex();
+      GL.tWater = glTex();
+      GL.tLake = glTex();
+      GL.tWet = glTex();
+      GL.fbo = gl.createFramebuffer();
+      GL.u = {};
+      var names = {
+        pDrop: ['uRes'],
+        pField: ['uLake', 'uWet', 'uRes', 'uLakeDim', 'uCS', 'uWetDim', 'uWC', 'uLakeOn'],
+        pComp: ['uBg', 'uFog', 'uWater', 'uRes']
+      };
+      for (var k in names) {
+        GL.u[k] = {};
+        for (var q = 0; q < names[k].length; q++) GL.u[k][names[k][q]] = gl.getUniformLocation(GL[k], names[k][q]);
+      }
+      glc.style.cssText = 'position:fixed;left:0;top:0;display:block;pointer-events:none';
+      document.body.insertBefore(glc, cv);
+    } catch (err) {
+      glOK = false;
+      gl = null;
+      if (window.console) console.log('Shader nicht verfügbar, zeichne mit 2D:', err);
+    }
+  }
+
+  function glResize() {
+    var sd = Math.min(2, dpr);
+    GL.fw = Math.round(W * sd);
+    GL.fh = Math.round(H * sd);
+    glc.width = GL.fw;
+    glc.height = GL.fh;
+    glc.style.width = W + 'px';
+    glc.style.height = H + 'px';
+    gl.bindTexture(gl.TEXTURE_2D, GL.tWater);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, GL.fw, GL.fh, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, GL.fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, GL.tWater, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    GL.lakeU8 = new Uint8Array(gw * gh);
+    gl.bindTexture(gl.TEXTURE_2D, GL.tLake);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gw, gh, 0, gl.RED, gl.UNSIGNED_BYTE, GL.lakeU8);
+    gl.bindTexture(gl.TEXTURE_2D, GL.tWet);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, wcols, wrows, 0, gl.RED, gl.UNSIGNED_BYTE, wet);
+    GL.lakeOn = 0;
+    GL.bgDirty = true;
+    GL.fogDirty = true;
+  }
+
+  function glUploadLake() {
+    var i, n = gw * gh, v;
+    rbuf.fill(0);
+    rtmp.fill(0);
+    for (i = 0; i < n; i++) { v = phi[i] + bphi[i]; bcomb[i] = v > 1 ? 1 : v; }
+    hBlur(bcomb, rtmp, 1, gh - 2);
+    vBlur(rtmp, rbuf, 1, gh - 2);
+    hBlur(rbuf, rtmp, 1, gh - 2);
+    vBlur(rtmp, rbuf, 1, gh - 2);
+    var u8 = GL.lakeU8;
+    for (i = 0; i < n; i++) {
+      v = rbuf[i] * RLIFT / 1.2;
+      u8[i] = v <= 0 ? 0 : (v >= 1 ? 255 : (v * 255) | 0);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, GL.tLake);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gw, gh, 0, gl.RED, gl.UNSIGNED_BYTE, u8);
+  }
+
+  function drawGL() {
+    var t = tick / 60, i, d;
+    if (tick % 2 === 0) {
+      paintBg(t);
+      gl.bindTexture(gl.TEXTURE_2D, GL.tBg);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bg);
+    } else if (GL.bgDirty) {
+      gl.bindTexture(gl.TEXTURE_2D, GL.tBg);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, bg);
+    }
+    GL.bgDirty = false;
+    if (tick % 2 === 1 || GL.fogDirty) {
+      gl.bindTexture(gl.TEXTURE_2D, GL.tFog);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, fog);
+      GL.fogDirty = false;
+      gl.bindTexture(gl.TEXTURE_2D, GL.tWet);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, wcols, wrows, 0, gl.RED, gl.UNSIGNED_BYTE, wet);
+    }
+    bodyOn = false;
+    bphi.fill(0);
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i];
+      if (d.held && !d.dead && d.r >= 12 && grav.m < FLAT_OFF) { paintBody(d, bphi); bodyOn = true; }
+    }
+    var lakeOn = lakeM > 0.5 || bodyOn;
+    if (lakeOn) {
+      if (lakeDirty || bodyOn || GL.bodyWas) { glUploadLake(); lakeDirty = false; }
+      GL.bodyWas = bodyOn;
+    } else if (GL.lakeOn) {
+      GL.lakeU8.fill(0);
+      gl.bindTexture(gl.TEXTURE_2D, GL.tLake);
+      gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gw, gh, 0, gl.RED, gl.UNSIGNED_BYTE, GL.lakeU8);
+      lakeDirty = false;
+    }
+    GL.lakeOn = lakeOn ? 1 : 0;
+
+    /* Instanzen der Tropfen, klein zuerst, damit große darüberliegen */
+    var list = [];
+    for (i = 0; i < drops.length; i++) {
+      d = drops[i];
+      if (!d.dead && d.r >= 0.6 && !(d.held && d.r >= 12 && grav.m < FLAT_OFF)) list.push(d);
+    }
+    list.sort(function (a, b) { return a.r - b.r; });
+    var inst = GL.inst, n = Math.min(list.length, CAP + 600);
+    for (i = 0; i < n; i++) {
+      d = list[i];
+      var vs = Math.hypot(d.vx, d.vy);
+      var el = 1;   /* keine Verzerrung: Form entsteht nur aus dem Wasser selbst */
+      var ea = vs > 0.15 ? Math.atan2(d.vy, d.vx) - Math.PI / 2 : (Math.atan2(grav.y, grav.x) - Math.PI / 2);
+      var o = i * 7;
+      inst[o] = d.x;
+      inst[o + 1] = d.y;
+      inst[o + 2] = d.r;
+      inst[o + 3] = el;
+      inst[o + 4] = ea;
+      inst[o + 5] = d.ghost > 0 ? Math.min(1, d.ghost / 10) : 1;
+      if (d.held && lakeMode && lakeM > 0.5) inst[o + 5] *= 1 - 0.92 * Math.min(1, lakeAt(d.x, d.y) * 1.2);
+      var fl = (lakeMode && !draining && (!d.slide || grav.m < 0.15)) ? Math.max(0, Math.min(1, (d.r - (lakeR(d) - 2)) / 4)) : 0;   /* flach nur dort, wo auch ein See entsteht */
+      inst[o + 6] = 0;
+    }
+
+    /* Pass 1: Wasserkarte */
+    gl.bindFramebuffer(gl.FRAMEBUFFER, GL.fbo);
+    gl.viewport(0, 0, GL.fw, GL.fh);
+    gl.disable(gl.BLEND);
+    gl.clearColor(0.5, 0.5, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.useProgram(GL.pField);
+    var uf = GL.u.pField;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, GL.tLake);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, GL.tWet);
+    gl.uniform1i(uf.uLake, 0);
+    gl.uniform1i(uf.uWet, 1);
+    gl.uniform2f(uf.uRes, W, H);
+    gl.uniform2f(uf.uLakeDim, gw, gh);
+    gl.uniform1f(uf.uCS, CS);
+    gl.uniform2f(uf.uWetDim, wcols, wrows);
+    gl.uniform1f(uf.uWC, WC);
+    gl.uniform1f(uf.uLakeOn, GL.lakeOn);
+    gl.bindVertexArray(GL.vaoFs);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+    if (n > 0) {
+      gl.enable(gl.BLEND);
+      gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+      gl.useProgram(GL.pDrop);
+      gl.uniform2f(GL.u.pDrop.uRes, W, H);
+      gl.bindVertexArray(GL.vaoDrop);
+      gl.bindBuffer(gl.ARRAY_BUFFER, GL.ibuf);
+      gl.bufferData(gl.ARRAY_BUFFER, inst.subarray(0, n * 7), gl.DYNAMIC_DRAW);
+      gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, n);
+      gl.disable(gl.BLEND);
+    }
+
+    /* Pass 2: Zusammensetzen */
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, GL.fw, GL.fh);
+    gl.useProgram(GL.pComp);
+    var uc = GL.u.pComp;
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, GL.tBg);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, GL.tFog);
+    gl.activeTexture(gl.TEXTURE2);
+    gl.bindTexture(gl.TEXTURE_2D, GL.tWater);
+    gl.uniform1i(uc.uBg, 0);
+    gl.uniform1i(uc.uFog, 1);
+    gl.uniform1i(uc.uWater, 2);
+    gl.uniform2f(uc.uRes, W, H);
+    gl.bindVertexArray(GL.vaoFs);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.bindVertexArray(null);
+  }
+
+  initGL();
+  resize();
+  window.addEventListener('resize', resize);
+  var last = performance.now();
+  function loop(now) {
+    var dt = Math.min(50, now - last);
+    last = now;
+    step(dt / 16.667);
+    draw();
+    requestAnimationFrame(loop);
+  }
+  draw();
+  requestAnimationFrame(loop);
+})();
+</script>
+
+<script>if ('serviceWorker' in navigator) { window.addEventListener('load', function () { navigator.serviceWorker.register('sw.js').catch(function () {}); }); }</script>
+</body>
+</html>
